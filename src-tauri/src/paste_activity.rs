@@ -8,6 +8,12 @@ struct Activity {
 }
 
 impl Activity {
+    fn other_mouse(&mut self, message: usize) {
+        if message != 0x200 {
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
     fn key(&mut self, key: u16, down: bool) {
         let allowed = self.shortcuts.iter().flatten().flatten().any(|&k| k == key);
         if !allowed {
@@ -121,7 +127,7 @@ mod platform {
                         if let Some((key, down)) = button {
                             state.key(key, down);
                         } else {
-                            state.revision = state.revision.wrapping_add(1);
+                            state.other_mouse(w.0);
                         }
                     }
                 }
@@ -262,6 +268,17 @@ pub(crate) use platform::{prepare, token, OWN_INPUT};
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn movement_does_not_invalidate_but_wheels_and_unknown_buttons_do() {
+        let mut s = state();
+        s.other_mouse(0x200);
+        assert_eq!(s.token(0), Some(0));
+        for message in [0x20a, 0x20e, 0x203] {
+            let previous = s.revision;
+            s.other_mouse(message);
+            assert_ne!(s.revision, previous);
+        }
+    }
     fn state() -> Activity {
         Activity {
             shortcuts: vec![vec![vec![0xa2, 0xa3], vec![0x20]], vec![vec![5]]],
