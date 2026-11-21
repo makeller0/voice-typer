@@ -25,7 +25,7 @@ import {
   clearOnboardingProgress,
   type OnboardingStep as OnboardingPreviewStep,
 } from "./components/onboarding/onboardingStore";
-import { DebugSettings, ModelsSettings } from "./components/settings";
+import { DebugSettings } from "./components/settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileDropOverlay } from "./components/FileDropOverlay";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
@@ -50,13 +50,7 @@ const renderSettingsContent = (
   onPreviewOnboarding: (step: OnboardingPreviewStep) => void,
   onRunOnboarding: () => void,
   onRunModelMigration: () => void,
-  onSectionChange: (section: SidebarSection) => void,
 ) => {
-  if (section === "models") {
-    return (
-      <ModelsSettings onChangeLanguages={() => onSectionChange("general")} />
-    );
-  }
   if (section === "debug") {
     return (
       <DebugSettings
@@ -227,8 +221,9 @@ function App() {
 
         await finishReturningUser(retiredModelId);
       } else {
-        // New user - start full onboarding
-        setOnboardingStep("flow");
+        // The lightweight edition ships ready to use: skip the setup wizard.
+        await commands.completeOnboarding();
+        setOnboardingStep("done");
       }
     } catch (error) {
       console.error("Failed to check onboarding status:", error);
@@ -333,17 +328,13 @@ function App() {
           {/* Scrollable content area */}
           <div className="flex-1 flex flex-col overflow-hidden">
             <div ref={settingsScrollRef} className="flex-1 overflow-y-auto">
-              {/* Models fills the window: its table scrolls, not the page. */}
-              <div
-                className={`flex flex-col items-center p-4 gap-4 ${currentSection === "models" ? "h-full" : ""}`}
-              >
+              <div className="flex flex-col items-center p-4 gap-4">
                 <SecureInputWarning />
                 {renderSettingsContent(
                   currentSection,
                   setOnboardingPreview,
                   runOnboarding,
                   runModelMigration,
-                  setCurrentSection,
                 )}
               </div>
             </div>
