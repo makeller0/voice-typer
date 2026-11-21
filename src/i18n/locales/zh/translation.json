@@ -1,6 +1,7 @@
 {
   "edition": {
     "name": "语音输入",
+    "tagline": "轻量版 · 点开即用",
     "mouseName": "鼠标侧键",
     "mouseDescription": "按住后退侧键说话，松开后输入文字。可以更改或清除。"
   },

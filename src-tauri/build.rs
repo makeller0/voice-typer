@@ -322,7 +322,7 @@ fn generate_tray_translations() {
     );
 
     // Struct
-    out.push_str("#[derive(Debug, Clone)]\npub struct TrayStrings {\n");
+    out.push_str("#[derive(Debug, Clone)]\n#[allow(dead_code)]\npub struct TrayStrings {\n");
     for (rust_field, _) in &fields {
         out.push_str(&format!("    pub {rust_field}: String,\n"));
     }

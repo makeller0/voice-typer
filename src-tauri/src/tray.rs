@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use tauri::image::Image;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIcon;
 use tauri::{AppHandle, Manager, Theme};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -59,18 +59,23 @@ struct MenuInputs {
     busy: bool,
     /// A background transcription holds the model, so it can't be switched
     /// or unloaded.
+    #[allow(dead_code)]
     models_locked: bool,
     /// macOS Secure Input is blocking keyboard shortcuts.
     secure_input: bool,
     /// The notice to show as a menu line.
     notice: Option<NoticeCode>,
+    #[allow(dead_code)]
     model_loaded: bool,
+    #[allow(dead_code)]
     selected_model: String,
     /// `(id, name)` of downloaded models, sorted by name.
+    #[allow(dead_code)]
     downloaded_models: Vec<(String, String)>,
     locale: String,
     update_checks_enabled: bool,
     /// The language submenu, when the selected model has languages to pick.
+    #[allow(dead_code)]
     language: Option<LanguageMenu>,
 }
 
@@ -464,51 +469,6 @@ fn language_menu(
     })
 }
 
-fn language_submenu(
-    app: &AppHandle,
-    strings: &crate::tray_i18n::TrayStrings,
-    menu: &LanguageMenu,
-) -> tauri::Result<Submenu<tauri::Wry>> {
-    let active_label = if menu.active == "auto" {
-        strings.auto_language.clone()
-    } else {
-        crate::languages::language_name(&menu.active)
-    };
-    let submenu = Submenu::with_id(
-        app,
-        "language_submenu",
-        format!("{} ({})", strings.language, active_label),
-        true,
-    )?;
-    let item = |code: &str, label: &str, enabled: bool| {
-        CheckMenuItem::with_id(
-            app,
-            format!("language_select:{code}"),
-            label,
-            enabled,
-            menu.active == code,
-            None::<&str>,
-        )
-    };
-
-    submenu.append(&item("auto", &strings.auto_language, menu.auto_enabled)?)?;
-    if !menu.main.is_empty() {
-        submenu.append(&PredefinedMenuItem::separator(app)?)?;
-        for (code, name) in &menu.main {
-            submenu.append(&item(code, name, true)?)?;
-        }
-    }
-    if !menu.others.is_empty() {
-        submenu.append(&PredefinedMenuItem::separator(app)?)?;
-        let others = Submenu::with_id(app, "language_others", &strings.other_languages, true)?;
-        for (code, name) in &menu.others {
-            others.append(&item(code, name, true)?)?;
-        }
-        submenu.append(&others)?;
-    }
-    Ok(submenu)
-}
-
 fn post_apply(app: &AppHandle) {
     let handle = app.clone();
     if let Err(err) = app.run_on_main_thread(move || apply_on_main(&handle)) {
@@ -710,52 +670,20 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
             ],
         )?
     } else {
-        // Build model submenu — label is the active model name
-        let submenu_label = inputs
-            .downloaded_models
-            .iter()
-            .find(|(id, _)| *id == inputs.selected_model)
-            .map(|(_, name)| name.clone())
-            .unwrap_or_else(|| strings.model.clone());
-
-        let model_submenu =
-            Submenu::with_id(app, "model_submenu", &submenu_label, !inputs.models_locked)?;
-        for (id, name) in &inputs.downloaded_models {
-            let is_active = *id == inputs.selected_model;
-            let item_id = format!("model_select:{}", id);
-            let item = CheckMenuItem::with_id(app, &item_id, name, true, is_active, None::<&str>)?;
-            model_submenu.append(&item)?;
-        }
-
-        let unload_model_i = MenuItem::with_id(
-            app,
-            "unload_model",
-            &strings.unload_model,
-            inputs.model_loaded && !inputs.models_locked,
-            None::<&str>,
-        )?;
-
-        let menu = Menu::with_items(
+        // One built-in model: no model or language choices in the tray.
+        Menu::with_items(
             app,
             &[
                 &version_i,
                 &separator()?,
                 &copy_last_transcript_i,
                 &separator()?,
-                &model_submenu,
-                &unload_model_i,
-                &separator()?,
                 &settings_i,
                 &check_updates_i,
                 &separator()?,
                 &quit_i,
             ],
-        )?;
-        // Right below the model submenu: version, separator, copy, separator, model.
-        if let Some(language) = &inputs.language {
-            menu.insert(&language_submenu(app, &strings, language)?, 5)?;
-        }
-        menu
+        )?
     };
 
     // When update checks are forced off (e.g. HANDY_DISABLE_UPDATER, set by

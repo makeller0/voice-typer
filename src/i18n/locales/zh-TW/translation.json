@@ -1,6 +1,7 @@
 {
   "edition": {
     "name": "VoiceTyper",
+    "tagline": "輕量版 · 開啟即用",
     "mouseName": "Mouse side button",
     "mouseDescription": "Hold the Back side button to dictate. Change or clear this binding here."
   },
