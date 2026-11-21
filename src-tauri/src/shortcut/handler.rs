@@ -49,6 +49,7 @@ pub(super) fn dispatch_shortcut_event(
 
     // Transcribe bindings are handled by the coordinator.
     if is_transcribe_binding(binding_id) {
+        log::info!("Dictation shortcut: binding={binding_id}, pressed={is_pressed}");
         if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
             coordinator.send_input(
                 binding_id,

@@ -192,6 +192,7 @@ pub fn recover_held_transcribe(app: &AppHandle) {
         settings.keyboard_implementation,
         crate::settings::KeyboardImplementation::None
     ) && physically_held(&binding);
+    log::info!("Startup keyboard recovery checked: held={held}");
     if held {
         log::debug!("Recovering held startup keyboard shortcut: {binding}");
         super::handler::handle_shortcut_event(app, "transcribe", &binding, true);

@@ -140,9 +140,12 @@ fn replace_previous_mark(enigo: &mut Enigo, replace: Option<Replacement>) -> Res
             && same_focus(Some(r.focus), paste_focus(Some(r.target)))
             && Some(r.activity) == activity_token()
     }) {
+        log::info!("Replacing previous own punctuation: sending one Backspace");
         enigo
             .key(Key::Backspace, Direction::Click)
             .map_err(|e| format!("Failed to replace previous punctuation: {e}"))?;
+    } else if replace.is_some() {
+        log::info!("Punctuation replacement skipped: target, focus or activity changed; pasting without Backspace");
     }
     Ok(())
 }

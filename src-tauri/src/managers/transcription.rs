@@ -1708,6 +1708,7 @@ fn post_process_transcription_text(
     supported_languages: &[String],
 ) -> String {
     fail_open_text_transform(raw, |raw| {
+        let raw_chars = raw.chars().count();
         // Last-resort language evidence: confidence-gated detection from the
         // transcribed text itself, constrained to the model's languages. Only
         // consulted when it can change the outcome (built-in gated fillers).
@@ -1759,6 +1760,10 @@ fn post_process_transcription_text(
         if has_spoken_command || text.chars().any(char::is_alphanumeric) {
             text
         } else {
+            info!(
+                "Transcript cleanup produced no text: raw_chars={raw_chars}, normalized_chars={}, spoken_command={has_spoken_command}; no letters or digits remain",
+                text.chars().count()
+            );
             String::new()
         }
     })

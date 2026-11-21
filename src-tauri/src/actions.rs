@@ -16,7 +16,7 @@ use crate::utils::{
     self, show_processing_overlay, show_recording_overlay, show_transcribing_overlay,
 };
 use crate::TranscriptionCoordinator;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -62,6 +62,10 @@ fn emit_transcription_complete(
             / crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE as f64,
         wait_seconds: stop_time.elapsed().as_secs_f64(),
     };
+    info!(
+        "Dictation finished: outcome={:?}, audio_seconds={:.3}, wait_seconds={:.3}",
+        event.outcome, event.audio_seconds, event.wait_seconds
+    );
     if let Err(e) = event.emit(app) {
         warn!("Failed to emit transcription complete: {e}");
     }
@@ -92,6 +96,9 @@ fn finish_without_text(
             Notice::new(NoticeCode::MicrophoneSilent, NoticeSource::Dictation),
         );
     } else {
+        warn!(
+            "Dictation produced no text: non-silent input, sample_count={sample_count}; no paste attempted"
+        );
         utils::hide_recording_overlay(app);
     }
     set_tray_state(app, TrayIconState::Idle);
