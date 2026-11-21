@@ -160,15 +160,97 @@ pub fn convert_chinese_script(
     variety: ChineseVariety,
     script: ChineseScript,
 ) -> String {
+    let text = spoken_punctuation(text);
     match converter(variety, script) {
-        Some(converter) => converter.convert(text),
-        None => text.to_string(),
+        Some(converter) => converter.convert(&text),
+        None => text,
     }
+}
+
+fn spoken_punctuation(text: &str) -> String {
+    const MARKS: &[(&str, char)] = &[
+        ("感叹号", '！'),
+        ("感嘆號", '！'),
+        ("叹号", '！'),
+        ("嘆號", '！'),
+        ("冒号", '：'),
+        ("冒號", '：'),
+        ("顿号", '、'),
+        ("頓號", '、'),
+        ("分号", '；'),
+        ("分號", '；'),
+        ("问号", '？'),
+        ("問號", '？'),
+        ("逗号", '，'),
+        ("逗號", '，'),
+        ("句号", '。'),
+        ("句號", '。'),
+    ];
+    let boundary = |c: char| c.is_whitespace() || "，。！？、；：,.!?;:…".contains(c);
+    let mut remaining = text;
+    let mut result = String::with_capacity(text.len());
+    while let Some((index, word, mark)) = MARKS
+        .iter()
+        .filter_map(|(word, mark)| remaining.find(word).map(|index| (index, *word, *mark)))
+        .min_by_key(|(index, word, _)| (*index, std::cmp::Reverse(word.len())))
+    {
+        result.push_str(remaining[..index].trim_end_matches(boundary));
+        result.push(mark);
+        remaining = remaining[index + word.len()..].trim_start_matches(boundary);
+    }
+    result.push_str(remaining);
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spoken_marks_replace_commands_and_neighboring_model_punctuation() {
+        assert_eq!(spoken_punctuation("优点，冒号，简单"), "优点：简单");
+        assert_eq!(spoken_punctuation("吃饭吧感叹号。"), "吃饭吧！");
+        assert_eq!(
+            spoken_punctuation("甲 , 冒号 ： 乙 顿号、丙分号；丁问号?戊逗号，己句号。"),
+            "甲：乙、丙；丁？戊，己。"
+        );
+        assert_eq!(spoken_punctuation("太好了叹号！"), "太好了！");
+        assert_eq!(spoken_punctuation("问号感叹号"), "？！");
+    }
+
+    #[test]
+    fn spoken_marks_preserve_empty_plain_and_unmatched_text() {
+        for text in [
+            "",
+            " ",
+            "普通文字",
+            "这个方案有三个优点：简单、快速、安全。",
+            "你今天晚上有空吗？我们一起吃饭吧！",
+            "冒",
+            "感叹",
+        ] {
+            assert_eq!(spoken_punctuation(text), text);
+        }
+    }
+
+    #[test]
+    fn spoken_marks_work_with_all_chinese_scripts() {
+        assert_eq!(
+            spoken_punctuation("優點，冒號，簡單頓號快速感嘆號。"),
+            "優點：簡單、快速！"
+        );
+        for script in [
+            ChineseScript::AsTranscribed,
+            ChineseScript::Simplified,
+            ChineseScript::TraditionalTw,
+            ChineseScript::TraditionalHk,
+        ] {
+            assert_eq!(
+                convert_chinese_script("问号感叹号", ChineseVariety::Mandarin, script),
+                "？！"
+            );
+        }
+    }
 
     #[test]
     fn variety_comes_from_the_text_not_the_detected_language() {
