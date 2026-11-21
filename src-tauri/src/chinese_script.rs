@@ -153,8 +153,8 @@ fn converter(variety: ChineseVariety, script: ChineseScript) -> Option<&'static 
     .as_ref()
 }
 
-/// Rewrites `text` into `script`. Fails open: if OpenCC can't be initialized
-/// the text is returned unchanged.
+/// Expands spoken punctuation, then rewrites `text` into `script`.
+/// If OpenCC can't be initialized, the original script is retained.
 pub fn convert_chinese_script(
     text: &str,
     variety: ChineseVariety,
@@ -167,29 +167,37 @@ pub fn convert_chinese_script(
     }
 }
 
+const SPOKEN_PUNCTUATION: &[(&str, char)] = &[
+    ("感叹号", '！'),
+    ("感嘆號", '！'),
+    ("叹号", '！'),
+    ("嘆號", '！'),
+    ("冒号", '：'),
+    ("冒號", '：'),
+    ("顿号", '、'),
+    ("頓號", '、'),
+    ("分号", '；'),
+    ("分號", '；'),
+    ("问号", '？'),
+    ("問號", '？'),
+    ("逗号", '，'),
+    ("逗號", '，'),
+    ("句号", '。'),
+    ("句號", '。'),
+];
+
+/// Whether the raw text contains an explicit spoken punctuation command.
+pub(crate) fn has_spoken_punctuation(text: &str) -> bool {
+    SPOKEN_PUNCTUATION
+        .iter()
+        .any(|(word, _)| text.contains(word))
+}
+
 fn spoken_punctuation(text: &str) -> String {
-    const MARKS: &[(&str, char)] = &[
-        ("感叹号", '！'),
-        ("感嘆號", '！'),
-        ("叹号", '！'),
-        ("嘆號", '！'),
-        ("冒号", '：'),
-        ("冒號", '：'),
-        ("顿号", '、'),
-        ("頓號", '、'),
-        ("分号", '；'),
-        ("分號", '；'),
-        ("问号", '？'),
-        ("問號", '？'),
-        ("逗号", '，'),
-        ("逗號", '，'),
-        ("句号", '。'),
-        ("句號", '。'),
-    ];
     let boundary = |c: char| c.is_whitespace() || "，。！？、；：,.!?;:…".contains(c);
     let mut remaining = text;
     let mut result = String::with_capacity(text.len());
-    while let Some((index, word, mark)) = MARKS
+    while let Some((index, word, mark)) = SPOKEN_PUNCTUATION
         .iter()
         .filter_map(|(word, mark)| remaining.find(word).map(|index| (index, *word, *mark)))
         .min_by_key(|(index, word, _)| (*index, std::cmp::Reverse(word.len())))

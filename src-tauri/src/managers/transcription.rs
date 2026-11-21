@@ -3,7 +3,9 @@ use crate::audio_toolkit::{
     apply_custom_words, detect_output_language, normalize_transcription_output,
     remove_filler_words, OutputLanguageEvidence,
 };
-use crate::chinese_script::{chinese_variety_for_text, convert_chinese_script};
+use crate::chinese_script::{
+    chinese_variety_for_text, convert_chinese_script, has_spoken_punctuation,
+};
 use crate::engine_supervisor::{
     CancelMark, DeviceInfo, DeviceSelector, EngineError, EngineSupervisor, LoadSpec, LoadedInfo,
     Unloading,
@@ -1728,7 +1730,9 @@ fn post_process_transcription_text(
         // Convert the script before custom words so they match in the script
         // the user writes in. Decided from the text, since mixed Mandarin/English
         // is often detected as English; Japanese is never rewritten.
-        let raw = match chinese_variety_for_text(&raw, &output_language) {
+        let variety = chinese_variety_for_text(&raw, &output_language);
+        let has_spoken_command = variety.is_some() && has_spoken_punctuation(&raw);
+        let raw = match variety {
             Some(variety) => convert_chinese_script(&raw, variety, settings.chinese_script),
             None => raw,
         };
@@ -1752,7 +1756,7 @@ fn post_process_transcription_text(
 
         let text = normalize_transcription_output(&without_fillers);
         // Short, wordless clips often come back as just "." or "?".
-        if text.chars().any(char::is_alphanumeric) {
+        if has_spoken_command || text.chars().any(char::is_alphanumeric) {
             text
         } else {
             String::new()
@@ -2114,6 +2118,54 @@ mod tests {
             );
 
             assert_eq!(result, "学校に行きます", "{evidence:?}");
+        }
+    }
+
+    #[test]
+    fn punctuation_only_spoken_commands_survive_final_cleanup() {
+        let settings = AppSettings::default();
+        for (raw, expected) in [
+            ("冒号", "："),
+            ("顿号", "、"),
+            ("感叹号", "！"),
+            ("叹号", "！"),
+            ("分号", "；"),
+            ("问号", "？"),
+            ("逗号", "，"),
+            ("句号", "。"),
+            ("  ，问号。  ", "？"),
+            ("问号感叹号", "？！"),
+            ("問號感嘆號", "？！"),
+        ] {
+            assert_eq!(
+                post_process_transcription_text(
+                    raw.to_string(),
+                    &settings,
+                    false,
+                    &OutputLanguageEvidence::Unknown,
+                    &languages(&["zh"]),
+                ),
+                expected,
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn wordless_model_output_without_spoken_commands_is_still_dropped() {
+        let settings = AppSettings::default();
+        for raw in ["", " ", ".", "?", "？！", "， 。 ！", "...", "\u{200B}"] {
+            assert_eq!(
+                post_process_transcription_text(
+                    raw.to_string(),
+                    &settings,
+                    false,
+                    &OutputLanguageEvidence::Unknown,
+                    &languages(&["zh"]),
+                ),
+                "",
+                "{raw}"
+            );
         }
     }
 
