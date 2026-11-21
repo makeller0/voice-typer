@@ -222,6 +222,18 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
     false
 }
 
+fn should_preload_model(timeout: settings::ModelUnloadTimeout) -> bool {
+    timeout != settings::ModelUnloadTimeout::Immediately
+}
+
+#[test]
+fn startup_preload_respects_unload_timeout() {
+    use settings::ModelUnloadTimeout;
+    assert!(!should_preload_model(ModelUnloadTimeout::Immediately));
+    assert!(should_preload_model(ModelUnloadTimeout::Never));
+    assert!(should_preload_model(ModelUnloadTimeout::Min5));
+}
+
 fn initialize_core_logic(app_handle: &AppHandle) {
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
@@ -251,7 +263,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
     app_handle.manage(TranscriptionJobManager::new(app_handle));
-    transcription_manager.initiate_model_load(true);
+    if should_preload_model(get_settings(app_handle).model_unload_timeout) {
+        transcription_manager.initiate_model_load(true);
+    }
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
