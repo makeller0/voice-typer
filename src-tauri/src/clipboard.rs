@@ -12,6 +12,10 @@ use std::sync::{mpsc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
+};
 
 #[cfg(target_os = "linux")]
 use crate::utils::{is_gnome_wayland, is_kde_wayland, is_wayland};
@@ -23,6 +27,7 @@ static PASTE_LOCK: Mutex<Option<RecentPaste>> = Mutex::new(None);
 struct RecentPaste {
     finished: Instant,
     target: usize,
+    focus: Option<usize>,
     ends_in_punctuation: bool,
     activity: Option<u64>,
 }
@@ -30,6 +35,7 @@ struct RecentPaste {
 #[derive(Clone, Copy)]
 struct Replacement {
     target: usize,
+    focus: usize,
     activity: u64,
 }
 
@@ -48,11 +54,13 @@ fn completed_paste(
     ends_in_punctuation: bool,
     finished: Instant,
     activity_before: Option<u64>,
+    focus: Option<usize>,
 ) -> Option<RecentPaste> {
     result.as_ref().ok().and_then(|()| {
         target.map(|target| RecentPaste {
             finished,
             target,
+            focus,
             ends_in_punctuation,
             activity: unchanged_activity(activity_before, activity_token()),
         })
@@ -94,10 +102,44 @@ fn paste_target() -> Option<usize> {
     None
 }
 
-fn replace_previous_mark(enigo: &mut Enigo, replace: Option<Replacement>) -> Result<(), String> {
-    if replace
-        .is_some_and(|r| Some(r.target) == paste_target() && Some(r.activity) == activity_token())
+fn paste_focus(target: Option<usize>) -> Option<usize> {
+    #[cfg(target_os = "windows")]
     {
+        let window = unsafe { GetForegroundWindow() };
+        if Some(window.0 as usize) != target {
+            return None;
+        }
+        let thread = unsafe { GetWindowThreadProcessId(window, None) };
+        if thread == 0 {
+            return None;
+        }
+        let mut info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..GUITHREADINFO::default()
+        };
+        unsafe { GetGUIThreadInfo(thread, &mut info) }.ok()?;
+        (info.hwndActive == window
+            && !info.hwndFocus.0.is_null()
+            && unsafe { GetForegroundWindow() } == window)
+            .then_some(info.hwndFocus.0 as usize)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = target;
+        None
+    }
+}
+
+fn same_focus(previous: Option<usize>, current: Option<usize>) -> bool {
+    previous.is_some() && previous == current
+}
+
+fn replace_previous_mark(enigo: &mut Enigo, replace: Option<Replacement>) -> Result<(), String> {
+    if replace.is_some_and(|r| {
+        Some(r.target) == paste_target()
+            && same_focus(Some(r.focus), paste_focus(Some(r.target)))
+            && Some(r.activity) == activity_token()
+    }) {
         enigo
             .key(Key::Backspace, Direction::Click)
             .map_err(|e| format!("Failed to replace previous punctuation: {e}"))?;
@@ -1006,27 +1048,38 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<PasteOutcome, String
     let blocked =
         sends_keys(settings.paste_method) && crate::utils::foreground_window_is_elevated();
     let target = paste_target();
+    let focus = paste_focus(target);
     let injects_keys = sends_keys(settings.paste_method);
     let replace = (!blocked
         && injects_keys
+        && previous
+            .as_ref()
+            .is_some_and(|p| same_focus(p.focus, focus))
         && should_replace_punctuation(previous.as_ref(), &text, target, Instant::now()))
     .then(|| previous.as_ref()?.activity)
     .flatten()
     .filter(|&activity| Some(activity) == activity_token())
-    .and_then(|activity| target.map(|target| Replacement { target, activity }));
+    .and_then(|activity| {
+        Some(Replacement {
+            target: target?,
+            focus: focus?,
+            activity,
+        })
+    });
     let ends_in_punctuation = !settings.append_trailing_space
         && !settings.auto_submit
         && text.chars().last().is_some_and(is_punctuation_mark);
     let activity_before = activity_token();
     let result = paste_as_configured(text, app_handle, settings, replace);
     if !blocked {
-        if injects_keys && target == paste_target() {
+        if injects_keys && target == paste_target() && same_focus(focus, paste_focus(target)) {
             *last_paste = completed_paste(
                 &result,
                 target,
                 ends_in_punctuation,
                 Instant::now(),
                 activity_before,
+                focus,
             );
         }
         return result.map(|()| PasteOutcome::Pasted);
@@ -1161,6 +1214,7 @@ mod tests {
         let previous = RecentPaste {
             finished: now - Duration::from_secs(30),
             target: 1,
+            focus: Some(11),
             ends_in_punctuation: true,
             activity: None,
         };
@@ -1209,6 +1263,7 @@ mod tests {
         let previous = RecentPaste {
             finished: now,
             target: 1,
+            focus: Some(11),
             ends_in_punctuation: true,
             activity: None,
         };
@@ -1225,10 +1280,17 @@ mod tests {
     #[test]
     fn failed_or_unknown_target_pastes_do_not_authorize_replacement() {
         let now = Instant::now();
-        let failed = completed_paste(&Err("injection failed".into()), Some(1), true, now, None);
+        let failed = completed_paste(
+            &Err("injection failed".into()),
+            Some(1),
+            true,
+            now,
+            None,
+            Some(11),
+        );
         assert!(failed.is_none());
-        assert!(completed_paste(&Ok(()), None, true, now, None).is_none());
-        let success = completed_paste(&Ok(()), Some(1), true, now, None);
+        assert!(completed_paste(&Ok(()), None, true, now, None, Some(11)).is_none());
+        let success = completed_paste(&Ok(()), Some(1), true, now, None, Some(11));
         assert!(should_replace_punctuation(
             success.as_ref(),
             "？",
@@ -1244,6 +1306,15 @@ mod tests {
         assert_eq!(unchanged_activity(None, Some(8)), None);
         assert_eq!(unchanged_activity(Some(7), None), None);
         assert_eq!(unchanged_activity(None, None), None);
+    }
+
+    #[test]
+    fn only_the_same_readable_focused_control_allows_replacement() {
+        assert!(same_focus(Some(11), Some(11)));
+        assert!(!same_focus(Some(11), Some(12)));
+        assert!(!same_focus(Some(11), None));
+        assert!(!same_focus(None, Some(11)));
+        assert!(!same_focus(None, None));
     }
 
     #[cfg(target_os = "linux")]
