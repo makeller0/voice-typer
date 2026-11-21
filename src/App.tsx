@@ -177,11 +177,18 @@ function App() {
         settingsResult.data.onboarding_completed === true;
       const currentPlatform = platform();
 
-      if (hasCompletedOnboarding) {
-        // Returning user - check if they need to grant permissions first
-        const retiredModelId = await getMigrationModelId(
-          settingsResult.data.selected_model ?? "",
-        );
+      {
+        // The lightweight edition ships ready to use: new users skip the
+        // setup wizard but still get the permission checks below.
+        if (!hasCompletedOnboarding) {
+          await commands.completeOnboarding();
+        }
+        const retiredModelId =
+          settingsResult.status === "ok"
+            ? await getMigrationModelId(
+                settingsResult.data.selected_model ?? "",
+              )
+            : null;
         setMigrationModelId(retiredModelId);
 
         if (currentPlatform === "macos") {
@@ -220,14 +227,10 @@ function App() {
         }
 
         await finishReturningUser(retiredModelId);
-      } else {
-        // The lightweight edition ships ready to use: skip the setup wizard.
-        await commands.completeOnboarding();
-        setOnboardingStep("done");
       }
     } catch (error) {
       console.error("Failed to check onboarding status:", error);
-      setOnboardingStep("flow");
+      setOnboardingStep("done");
     }
   };
 
