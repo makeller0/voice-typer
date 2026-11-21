@@ -126,6 +126,20 @@ export const useShortcutCapture = (
   }, [capturing, finish]);
 
   useEffect(() => {
+    if (!capturing) return;
+    const preventNavigation = (event: MouseEvent) => {
+      if (event.button === 3 || event.button === 4) event.preventDefault();
+    };
+    const events = ["mousedown", "mouseup", "auxclick"] as const;
+    for (const event of events)
+      window.addEventListener(event, preventNavigation, true);
+    return () => {
+      for (const event of events)
+        window.removeEventListener(event, preventNavigation, true);
+    };
+  }, [capturing]);
+
+  useEffect(() => {
     if (!capturing || !escapeCancels) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
