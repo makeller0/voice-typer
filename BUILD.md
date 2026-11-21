@@ -27,24 +27,8 @@ This guide covers how to set up the development environment and build Handy from
   winget install Kitware.CMake
   ```
 
-- [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) from LunarG — required to
-  build the Vulkan GPU backend (`vulkan-shaders-gen` needs the SDK's headers
-  and `glslc`):
-
-  ```powershell
-  winget install KhronosGroup.VulkanSDK
-  ```
-
-  Open a new terminal afterward so `VULKAN_SDK` is set.
-
-> [!NOTE]
-> Windows' 260-character path limit used to break the native Vulkan build in
-> most checkouts. Since `transcribe-cpp` 0.1.3 the build works around it
-> automatically (it compiles through a short NTFS junction — no admin rights
-> or setup needed), so a normal checkout just builds. If you still hit
-> path-limit errors, see
-> [Windows build fails with path-limit errors](#windows-build-fails-with-path-limit-errors-msb3491--ftk1011--msb6003)
-> in Troubleshooting.
+Windows transcription is CPU-only; no Vulkan SDK is needed. x64 builds keep
+dynamic per-ISA CPU backends for runtime selection.
 
 #### Linux
 
@@ -192,7 +176,7 @@ Then install using the deb extraction method above.
 
 ### Windows build fails with path-limit errors (`MSB3491` / `FTK1011` / `MSB6003`)
 
-On Windows the native build can fail partway through `transcribe-cpp-sys` with
+Older Vulkan-enabled Windows builds can fail partway through `transcribe-cpp-sys` with
 any of these (all the same root cause):
 
 ```

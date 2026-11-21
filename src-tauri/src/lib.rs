@@ -1018,12 +1018,7 @@ pub fn run(cli_args: CliArgs) {
         .manage(cli_args.clone())
         .manage(notices::NoticeStore::default())
         .setup(move |app| {
-            #[cfg(target_os = "windows")]
-            log::info!(
-                "Vulkan layer policy: VK_LOADER_LAYERS_DISABLE={:?}, HANDY_KEEP_VULKAN_IMPLICIT_LAYERS={}",
-                std::env::var_os("VK_LOADER_LAYERS_DISABLE"),
-                utils::env_flag_enabled("HANDY_KEEP_VULKAN_IMPLICIT_LAYERS"),
-            );
+            log::debug!("Initializing application setup");
             #[cfg(target_os = "linux")]
             log::info!(
                 "GTK backend: GDK_BACKEND={:?}, HANDY_GDK_BACKEND={:?} (applied: {})",

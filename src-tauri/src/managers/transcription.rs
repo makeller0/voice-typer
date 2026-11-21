@@ -1861,10 +1861,7 @@ fn drain_until_finalize(rx: mpsc::Receiver<StreamCmd>) {
 /// a background thread instead of its startup path.
 pub fn report_compute_devices(tm: &TranscriptionManager) {
     if transcribe_gpu_disabled_for_host() {
-        warn!(
-            "Windows x64 build is running under emulation on an ARM64 host; \
-             disabling transcribe.cpp GPU acceleration and using CPU"
-        );
+        info!("transcribe.cpp GPU acceleration is unavailable in this build; using CPU");
     }
     match transcribe_compute_devices(&tm.engine) {
         Ok(devices) => info!(
@@ -1947,7 +1944,7 @@ pub struct GpuDeviceOption {
 }
 
 fn transcribe_gpu_disabled_for_host() -> bool {
-    crate::utils::is_windows_x64_emulated_on_arm64()
+    cfg!(target_os = "windows")
 }
 
 fn effective_transcribe_accelerator(
@@ -2014,6 +2011,28 @@ pub fn get_available_accelerators(tm: &TranscriptionManager) -> AvailableAcceler
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_build_ignores_persisted_gpu_choices() {
+        assert!(transcribe_gpu_disabled_for_host());
+        for setting in [
+            TranscribeAcceleratorSetting::Auto,
+            TranscribeAcceleratorSetting::Cpu,
+            TranscribeAcceleratorSetting::Gpu,
+        ] {
+            assert_eq!(select_transcribe_backend(setting), Backend::Cpu);
+        }
+        assert_eq!(available_transcribe_accelerators(true), ["cpu"]);
+        assert_eq!(
+            resolve_gpu_device(TranscribeAcceleratorSetting::Gpu, None),
+            None
+        );
+        assert_eq!(
+            resolve_gpu_device(TranscribeAcceleratorSetting::Gpu, Some("stale-device")),
+            None
+        );
+    }
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()

@@ -163,7 +163,7 @@ fn stage_transcribe_runtime_libs() {
     // transcribe-cpp publishes its runtime layout in up to two directories:
     //   RUNTIME_DIR : the shared libs to load (transcribe + core ggml / ggml-base)
     //   MODULE_DIR  : the dlopen'd ggml backend modules (the per-ISA ggml-cpu-*
-    //                 and ggml-vulkan), dynamic-backends only. Often — but not
+    //                 and, on Linux, ggml-vulkan). Often — but not
     //                 always — the SAME directory as RUNTIME_DIR (it is on Linux).
     // BOTH must sit next to the executable, or init_backends_default() finds the
     // core libs but zero loadable compute backends and registers no devices.
@@ -197,7 +197,9 @@ fn stage_transcribe_runtime_libs() {
                 || name.ends_with(".dylib")
                 || name.ends_with(".so")
                 || name.contains(".so.");
-            if is_lib {
+            let excluded_backend = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+                && name.eq_ignore_ascii_case("ggml-vulkan.dll");
+            if is_lib && !excluded_backend {
                 libs.insert(name.to_string(), src);
             }
         }
