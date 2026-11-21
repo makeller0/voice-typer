@@ -1347,13 +1347,9 @@ impl ModelManager {
                 Self::selected_model_is_available(&models, &settings.selected_model)
             };
 
-            // A retired model on disk stays selected so the frontend can
-            // offer its replacement. It can't load: it isn't in the registry.
-            let is_retired = RETIRED_ONNX_MODELS
-                .iter()
-                .any(|model| model.id == settings.selected_model && self.is_retired_on_disk(model));
-
-            if !is_available && !is_retired {
+            // The lightweight edition has no migration path, so a retired
+            // selection is cleared too and the bundled model takes over.
+            if !is_available {
                 info!(
                     "Selected model '{}' is not available on disk; clearing selection",
                     settings.selected_model
