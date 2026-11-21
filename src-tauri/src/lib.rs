@@ -252,7 +252,7 @@ fn startup_preload_respects_unload_timeout() {
     assert!(should_preload_model(ModelUnloadTimeout::Min5));
 }
 
-fn initialize_core_logic(app_handle: &AppHandle) {
+fn initialize_core_logic(app_handle: &AppHandle, headless_mode: bool) {
     // Initialize the managers. The audio recorder receives the streaming router
     // explicitly, so always-on microphone startup can wire live-preview frames
     // even before Tauri state is populated.
@@ -276,6 +276,26 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
     app_handle.manage(TranscriptionJobManager::new(app_handle));
+    #[cfg(target_os = "windows")]
+    {
+        let settings = get_settings(app_handle);
+        let permission = commands::audio::get_windows_microphone_permission_status();
+        if should_initialize_startup_input(
+            settings.onboarding_completed,
+            headless_mode,
+            permission.supported
+                && permission.overall_access == commands::audio::PermissionAccess::Denied,
+        ) {
+            match commands::initialize_enigo(app_handle.clone()) {
+                Ok(()) => {
+                    if let Err(error) = commands::initialize_shortcuts(app_handle.clone()) {
+                        log::warn!("Failed to initialize startup shortcuts: {error}");
+                    }
+                }
+                Err(error) => log::warn!("Failed to initialize startup input: {error}"),
+            }
+        }
+    }
     if should_preload_model(get_settings(app_handle).model_unload_timeout) {
         transcription_manager.initiate_model_load(true);
     }
@@ -1154,27 +1174,7 @@ pub fn run(cli_args: CliArgs) {
             let app_handle = app.handle().clone();
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
-            initialize_core_logic(&app_handle);
-
-            #[cfg(target_os = "windows")]
-            {
-                let permission = commands::audio::get_windows_microphone_permission_status();
-                if should_initialize_startup_input(
-                    settings.onboarding_completed,
-                    headless_mode,
-                    permission.supported
-                        && permission.overall_access == commands::audio::PermissionAccess::Denied,
-                ) {
-                    match commands::initialize_enigo(app_handle.clone()) {
-                        Ok(()) => {
-                            if let Err(error) = commands::initialize_shortcuts(app_handle.clone()) {
-                                log::warn!("Failed to initialize startup shortcuts: {error}");
-                            }
-                        }
-                        Err(error) => log::warn!("Failed to initialize startup input: {error}"),
-                    }
-                }
-            }
+            initialize_core_logic(&app_handle, headless_mode);
 
             // Secure Input monitor (macOS): detects stuck secure input that
             // silently blocks keyed shortcuts, warns the user, and activates
