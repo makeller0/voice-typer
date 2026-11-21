@@ -67,6 +67,20 @@ const CHINESE_LANGUAGE_CODE: &str = "zh";
 pub const BUNDLED_MODEL_ID: &str = "sensevoice-q5-bundled";
 pub const BUNDLED_MODEL_FILE: &str = "SenseVoiceSmall-Q5_K_M.gguf";
 
+pub fn ensure_model_deletable(model_id: &str) -> Result<()> {
+    if model_id == BUNDLED_MODEL_ID {
+        anyhow::bail!("The bundled model cannot be deleted");
+    }
+    Ok(())
+}
+
+#[test]
+fn bundled_model_cannot_be_deleted() {
+    assert!(ensure_model_deletable(BUNDLED_MODEL_ID).is_err());
+    assert!(ensure_model_deletable("custom-model").is_ok());
+    assert!(ensure_model_deletable("").is_ok());
+}
+
 fn bundled_model_file(path: &Path) -> Result<PathBuf> {
     if path.metadata().is_ok_and(|m| m.is_file() && m.len() > 0) {
         Ok(path.to_path_buf())
@@ -2429,6 +2443,7 @@ impl ModelManager {
     }
 
     pub fn delete_model(&self, model_id: &str) -> Result<()> {
+        ensure_model_deletable(model_id)?;
         debug!("ModelManager: delete_model called for: {}", model_id);
 
         let model_info = {

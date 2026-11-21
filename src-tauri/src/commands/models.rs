@@ -1,4 +1,6 @@
-use crate::managers::model::{ModelInfo, ModelManager, RetiredModel, LANGUAGE_DETECTOR_ID};
+use crate::managers::model::{
+    ensure_model_deletable, ModelInfo, ModelManager, RetiredModel, LANGUAGE_DETECTOR_ID,
+};
 use crate::managers::transcription::{ModelStateEvent, TranscriptionManager};
 use crate::notices::{self, NoticeSource};
 use crate::settings::{get_settings, write_settings, ModelUnloadTimeout};
@@ -119,6 +121,7 @@ pub async fn delete_model(
     model_id: String,
 ) -> Result<(), String> {
     // If deleting the active model, unload it and clear the setting
+    ensure_model_deletable(&model_id).map_err(|e| e.to_string())?;
     let settings = get_settings(&app_handle);
     if settings.selected_model == model_id {
         transcription_manager.ensure_model_unlocked()?;
