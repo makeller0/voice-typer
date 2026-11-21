@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "VoiceTyper",
+  "mainBinaryName": "voicetyper",
   "version": "0.10.1",
   "identifier": "com.makeller0.voicetyper",
   "build": {
@@ -74,9 +75,10 @@
       }
     },
     "windows": {
-      "webviewInstallMode": { "type": "offlineInstaller", "silent": true },
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
       "signCommand": "trusted-signing-cli -e https://eus.codesigning.azure.net/ -a CJ-Signing -c cjpais-dev -d Handy %1",
       "nsis": {
+        "compression": "lzma",
         "template": "nsis/installer.nsi",
         "installerIcon": "icons/icon.ico"
       }

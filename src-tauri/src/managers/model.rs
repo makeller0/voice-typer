@@ -67,6 +67,30 @@ const CHINESE_LANGUAGE_CODE: &str = "zh";
 pub const BUNDLED_MODEL_ID: &str = "sensevoice-q5-bundled";
 pub const BUNDLED_MODEL_FILE: &str = "SenseVoiceSmall-Q5_K_M.gguf";
 
+fn bundled_model_file(path: &Path) -> Result<PathBuf> {
+    if path.metadata().is_ok_and(|m| m.is_file() && m.len() > 0) {
+        Ok(path.to_path_buf())
+    } else {
+        Err(anyhow::anyhow!(
+            "Bundled model file missing or empty: {:?}",
+            path
+        ))
+    }
+}
+
+#[test]
+fn bundled_model_uses_resource_file_without_copying() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(BUNDLED_MODEL_FILE);
+    assert!(bundled_model_file(&path).is_err());
+    fs::write(&path, []).unwrap();
+    assert!(bundled_model_file(&path).is_err());
+    fs::write(&path, b"model").unwrap();
+    assert_eq!(bundled_model_file(&path).unwrap(), path);
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    assert!(bundled_model_file(dir.path()).is_err());
+}
+
 fn bundled_model() -> ModelInfo {
     ModelInfo {
         id: BUNDLED_MODEL_ID.to_string(),
@@ -921,6 +945,7 @@ pub struct RetiredModel {
 pub struct ModelManager {
     app_handle: AppHandle,
     models_dir: PathBuf,
+    bundled_model_path: PathBuf,
     available_models: Mutex<HashMap<String, ModelInfo>>,
     cancel_flags: Arc<Mutex<HashMap<String, CancellationToken>>>,
     /// Single-flight guard for [`Self::rescan_local_models`] so concurrent
@@ -1130,14 +1155,15 @@ impl ModelManager {
         let manager = Self {
             app_handle: app_handle.clone(),
             models_dir,
+            bundled_model_path: app_handle.path().resolve(
+                format!("resources/models/{}", BUNDLED_MODEL_FILE),
+                tauri::path::BaseDirectory::Resource,
+            )?,
             available_models: Mutex::new(available_models),
             cancel_flags: Arc::new(Mutex::new(HashMap::new())),
             is_rescanning: Arc::new(AtomicBool::new(false)),
             detector_download: tokio::sync::Mutex::new(()),
         };
-
-        // Migrate any bundled models to user directory
-        manager.migrate_bundled_models()?;
 
         // Check which models are already downloaded
         manager.update_download_status()?;
@@ -1294,33 +1320,6 @@ impl ModelManager {
         }
     }
 
-    fn migrate_bundled_models(&self) -> Result<()> {
-        // Check for bundled models and copy them to user directory
-        let bundled_models = [BUNDLED_MODEL_FILE];
-
-        for filename in &bundled_models {
-            let bundled_path = self.app_handle.path().resolve(
-                format!("resources/models/{}", filename),
-                tauri::path::BaseDirectory::Resource,
-            );
-
-            if let Ok(bundled_path) = bundled_path {
-                if bundled_path.exists() {
-                    let user_path = self.models_dir.join(filename);
-
-                    // Only copy if user doesn't already have the model
-                    if !user_path.exists() {
-                        info!("Migrating bundled model {} to user directory", filename);
-                        fs::copy(&bundled_path, &user_path)?;
-                        info!("Successfully migrated {}", filename);
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     fn is_retired_on_disk(&self, model: &RetiredOnnxModel) -> bool {
         model
             .disk_names
@@ -1375,6 +1374,12 @@ impl ModelManager {
         let mut vanished_models: Vec<String> = Vec::new();
 
         for model in models.values_mut() {
+            if model.id == BUNDLED_MODEL_ID {
+                model.is_downloaded = bundled_model_file(&self.bundled_model_path).is_ok();
+                model.is_downloading = false;
+                model.partial_size = 0;
+                continue;
+            }
             if let ModelSource::HuggingFace { repo_id, revision } = &model.source {
                 // A models-dir copy counts too: mirror-fallback downloads land
                 // there, and it makes manual drop-ins of catalog files work.
@@ -2563,6 +2568,11 @@ impl ModelManager {
     }
 
     pub fn get_model_path(&self, model_id: &str) -> Result<PathBuf> {
+        if model_id == BUNDLED_MODEL_ID {
+            let path = bundled_model_file(&self.bundled_model_path)?;
+            info!("Using bundled model directly from resources: {:?}", path);
+            return Ok(path);
+        }
         let model_info = self
             .get_model_info(model_id)
             .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;

@@ -7,8 +7,8 @@
 
 运行 `VoiceTyper_0.10.1_x64-setup.exe`，按提示安装。仅支持 64 位 Windows。
 安装包已经包含 SenseVoiceSmall Q5_K_M 中文识别模型，不需要下载模型或注册账号。
-安装包也包含 WebView2 离线安装程序，电脑缺少该组件时不必联网下载，因此安装包较大。
-首次启动会在本机复制并预热模型，请稍等片刻；若 Windows 提示麦克风权限，请允许访问。
+安装程序优先使用电脑已有的 WebView2；若缺少该组件，引导程序需要联网下载安装。
+模型直接从安装目录读取，不会复制到用户数据目录。首次启动会预热模型，请稍等片刻；若 Windows 提示麦克风权限，请允许访问。
 应用使用独立的数据目录，可以与 Handy 同时安装（同时运行时请避免快捷键冲突）。
 
 ## 说话就能输入
@@ -74,12 +74,14 @@ the installed app never downloads its default model. For an offline build, put
 the verified `SenseVoiceSmall-Q5_K_M.gguf` in `src-tauri/resources/models/` first.
 For development, run `bun scripts/prepare-bundled-model.ts` before `bun run tauri dev`.
 The Silero VAD resource described in BUILD.md must also be present.
-WebView2's offline installer is also bundled so a PC without the runtime can
-install without a network connection. Tauri downloads it on the build machine.
+Only WebView2's small bootstrapper is embedded. An existing runtime is reused;
+if absent, installing WebView2 requires internet. NSIS uses solid LZMA compression.
+The bundled model is loaded directly from installed resources, without an
+additional app-data copy.
 
 Output: `src-tauri/target/release/bundle/nsis/VoiceTyper_0.10.1_x64-setup.exe`.
-The installed executable retains the internal name `handy.exe`; application and
-installer names are VoiceTyper and the bundle ID is `com.makeller0.voicetyper`.
+The installed executable is `voicetyper.exe`; application and installer names
+are VoiceTyper and the bundle ID is `com.makeller0.voicetyper`.
 Updater checks are forced off and no Handy release endpoint is configured.
 The Windows webviews disable background networking and remote DNS resolution;
 local app/IPC origins are allowed. Optional model downloads and LLM requests use
