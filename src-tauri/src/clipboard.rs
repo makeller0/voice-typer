@@ -24,22 +24,6 @@ struct RecentPaste {
     finished: Instant,
     target: usize,
     ends_in_punctuation: bool,
-    activity: Option<u64>,
-}
-
-#[derive(Clone, Copy)]
-struct Replacement {
-    target: usize,
-    activity: u64,
-}
-
-fn activity_token() -> Option<u64> {
-    #[cfg(target_os = "windows")]
-    {
-        crate::paste_activity::token()
-    }
-    #[cfg(not(target_os = "windows"))]
-    None
 }
 
 fn completed_paste(
@@ -53,7 +37,6 @@ fn completed_paste(
             finished,
             target,
             ends_in_punctuation,
-            activity: activity_token(),
         })
     })
 }
@@ -89,10 +72,8 @@ fn paste_target() -> Option<usize> {
     None
 }
 
-fn replace_previous_mark(enigo: &mut Enigo, replace: Option<Replacement>) -> Result<(), String> {
-    if replace
-        .is_some_and(|r| Some(r.target) == paste_target() && Some(r.activity) == activity_token())
-    {
+fn replace_previous_mark(enigo: &mut Enigo, replace: bool) -> Result<(), String> {
+    if replace {
         enigo
             .key(Key::Backspace, Direction::Click)
             .map_err(|e| format!("Failed to replace previous punctuation: {e}"))?;
@@ -158,7 +139,7 @@ fn paste_via_clipboard(
     paste_method: &PasteMethod,
     paste_delay_ms: u64,
     paste_delay_after_ms: u64,
-    replace_punctuation: Option<Replacement>,
+    replace_punctuation: bool,
 ) -> Result<(), String> {
     let clipboard = app_handle.clipboard();
     let saved_text = clipboard.read_text().ok().filter(|t| !t.is_empty());
@@ -202,10 +183,8 @@ fn paste_via_clipboard(
     // Capture key injection errors so the original clipboard is restored before
     // propagating them to the caller.
     let paste_result = (|| -> Result<(), String> {
-        if replace_punctuation.is_some() {
-            with_enigo(app_handle, move |enigo| {
-                replace_previous_mark(enigo, replace_punctuation)
-            })?;
+        if replace_punctuation {
+            with_enigo(app_handle, |enigo| replace_previous_mark(enigo, true))?;
         }
         // Send paste key combo
         #[cfg(target_os = "linux")]
@@ -902,7 +881,7 @@ fn paste_via_external_script(text: &str, script_path: &str) -> Result<(), String
 fn paste_direct(
     text: &str,
     app_handle: &AppHandle,
-    replace_punctuation: Option<Replacement>,
+    replace_punctuation: bool,
     #[cfg(target_os = "linux")] typing_tool: TypingTool,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
@@ -992,8 +971,6 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<PasteOutcome, String
     let mut last_paste = PASTE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let previous = last_paste.take();
     let settings = get_settings(&app_handle);
-    #[cfg(target_os = "windows")]
-    crate::paste_activity::prepare(&settings);
 
     // Windows drops the keystrokes Handy sends to an elevated window and may
     // not say so, so ask before pasting instead of trusting the result. The
@@ -1002,13 +979,9 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<PasteOutcome, String
         sends_keys(settings.paste_method) && crate::utils::foreground_window_is_elevated();
     let target = paste_target();
     let injects_keys = sends_keys(settings.paste_method);
-    let replace = (!blocked
+    let replace = !blocked
         && injects_keys
-        && should_replace_punctuation(previous.as_ref(), &text, target, Instant::now()))
-    .then(|| previous.as_ref()?.activity)
-    .flatten()
-    .filter(|&activity| Some(activity) == activity_token())
-    .and_then(|activity| target.map(|target| Replacement { target, activity }));
+        && should_replace_punctuation(previous.as_ref(), &text, target, Instant::now());
     let ends_in_punctuation = !settings.append_trailing_space
         && !settings.auto_submit
         && text.chars().last().is_some_and(is_punctuation_mark);
@@ -1029,7 +1002,7 @@ fn paste_as_configured(
     text: String,
     app_handle: AppHandle,
     settings: AppSettings,
-    replace_punctuation: Option<Replacement>,
+    replace_punctuation: bool,
 ) -> Result<(), String> {
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;
@@ -1068,7 +1041,7 @@ fn paste_as_configured(
             // clipboard handling) asynchronously; on failure fall through to
             // the legacy path untouched.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            if settings.reliable_paste {
+            if settings.reliable_paste && !replace_punctuation {
                 // Runs entirely on the main thread, as it requires.
                 let (text, app) = (text.clone(), app_handle.clone());
                 let (auto_submit, auto_submit_key, clipboard_handling) = (
@@ -1077,7 +1050,6 @@ fn paste_as_configured(
                     settings.clipboard_handling,
                 );
                 let reliable_result = with_enigo(&app_handle, move |enigo| {
-                    replace_previous_mark(enigo, replace_punctuation)?;
                     crate::paste_tx::try_reliable_paste(
                         &text,
                         &app,
@@ -1091,15 +1063,7 @@ fn paste_as_configured(
                 match reliable_result {
                     Ok(()) => return Ok(()),
                     Err(e) => {
-                        log::warn!("Reliable paste unavailable ({e}); falling back to legacy paste");
-                        return paste_via_clipboard(
-                            &text,
-                            &app_handle,
-                            &paste_method,
-                            paste_delay_ms,
-                            paste_delay_after_ms,
-                            None,
-                        );
+                        log::warn!("Reliable paste unavailable ({e}); falling back to legacy paste")
                     }
                 }
             }
@@ -1152,7 +1116,6 @@ mod tests {
             finished: now - Duration::from_secs(30),
             target: 1,
             ends_in_punctuation: true,
-            activity: None,
         };
         for mark in ["：", "、", "！", "；", "？", "，", "。"] {
             assert!(should_replace_punctuation(
@@ -1200,7 +1163,6 @@ mod tests {
             finished: now,
             target: 1,
             ends_in_punctuation: true,
-            activity: None,
         };
         for text in ["", " ", "简单。", "问号", "？！", "？ ", "请按问号键。"] {
             assert!(!should_replace_punctuation(

@@ -19,8 +19,6 @@ mod managers;
 mod memory;
 mod notices;
 mod overlay;
-#[cfg(any(target_os = "windows", test))]
-mod paste_activity;
 mod paste_tx;
 pub mod portable;
 #[cfg(target_os = "linux")]

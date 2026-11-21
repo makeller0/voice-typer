@@ -29,7 +29,7 @@ impl PressState {
     }
 }
 
-pub(crate) fn virtual_key(key: Key) -> Option<u16> {
+fn virtual_key(key: Key) -> Option<u16> {
     let name = key.to_string();
     if name.len() == 1 && name.as_bytes()[0].is_ascii_alphanumeric() {
         return Some(name.as_bytes()[0].to_ascii_uppercase() as u16);
@@ -101,7 +101,7 @@ pub(crate) fn virtual_key(key: Key) -> Option<u16> {
     })
 }
 
-pub(crate) fn keyboard_hotkey(binding: &str) -> Option<Hotkey> {
+fn keyboard_hotkey(binding: &str) -> Option<Hotkey> {
     let hotkey: Hotkey = binding.parse().ok()?;
     if hotkey.modifiers.contains(Modifiers::FN) {
         return None;
