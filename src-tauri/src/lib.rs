@@ -288,8 +288,11 @@ fn initialize_core_logic(app_handle: &AppHandle, headless_mode: bool) {
         ) {
             match commands::initialize_enigo(app_handle.clone()) {
                 Ok(()) => {
+                    app_handle.manage(shortcut::startup_keyboard::KeyboardPressState::default());
                     if let Err(error) = commands::initialize_shortcuts(app_handle.clone()) {
                         log::warn!("Failed to initialize startup shortcuts: {error}");
+                    } else {
+                        shortcut::startup_keyboard::recover_held_transcribe(app_handle);
                     }
                 }
                 Err(error) => log::warn!("Failed to initialize startup input: {error}"),

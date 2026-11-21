@@ -32,6 +32,19 @@ pub fn handle_shortcut_event(
     hotkey_string: &str,
     is_pressed: bool,
 ) {
+    #[cfg(target_os = "windows")]
+    if super::startup_keyboard::handle_event(app, binding_id, hotkey_string, is_pressed) {
+        return;
+    }
+    dispatch_shortcut_event(app, binding_id, hotkey_string, is_pressed);
+}
+
+pub(super) fn dispatch_shortcut_event(
+    app: &AppHandle,
+    binding_id: &str,
+    hotkey_string: &str,
+    is_pressed: bool,
+) {
     let settings = get_settings(app);
 
     // Transcribe bindings are handled by the coordinator.
