@@ -7,6 +7,7 @@ import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
 import { useShortcutCapture } from "../../hooks/useShortcutCapture";
 import { usePressAway } from "../../hooks/usePressAway";
+import { notify } from "../../stores/noticeStore";
 
 interface ShortcutInputProps {
   descriptionMode?: "inline" | "tooltip";
@@ -26,7 +27,8 @@ export const ShortcutInput: React.FC<ShortcutInputProps> = ({
   disabled = false,
 }) => {
   const { t } = useTranslation();
-  const { getSetting, resetBinding, isUpdating, isLoading } = useSettings();
+  const { getSetting, resetBinding, updateBinding, isUpdating, isLoading } =
+    useSettings();
   const osType = useOsType();
   const { capturing, partial, start, cancel } = useShortcutCapture(
     shortcutId,
@@ -87,14 +89,20 @@ export const ShortcutInput: React.FC<ShortcutInputProps> = ({
   }
 
   // Get translated name and description for the binding
-  const translatedName = t(
-    `settings.general.shortcut.bindings.${shortcutId}.name`,
-    binding.name,
-  );
-  const translatedDescription = t(
-    `settings.general.shortcut.bindings.${shortcutId}.description`,
-    binding.description,
-  );
+  const translatedName =
+    shortcutId === "transcribe_mouse"
+      ? t("edition.mouseName")
+      : t(
+          `settings.general.shortcut.bindings.${shortcutId}.name`,
+          binding.name,
+        );
+  const translatedDescription =
+    shortcutId === "transcribe_mouse"
+      ? t("edition.mouseDescription")
+      : t(
+          `settings.general.shortcut.bindings.${shortcutId}.description`,
+          binding.description,
+        );
 
   return (
     <SettingContainer
@@ -120,8 +128,32 @@ export const ShortcutInput: React.FC<ShortcutInputProps> = ({
             className="px-2 py-1 text-sm font-semibold bg-wash border border-line-strong hover:bg-logo-primary/10 rounded-md cursor-pointer hover:border-logo-primary"
             onClick={start}
           >
-            {formatKeyCombination(binding.current_binding, osType)}
+            {binding.current_binding
+              ? formatKeyCombination(binding.current_binding, osType)
+              : t("settings.general.shortcut.none")}
           </div>
+        )}
+        {shortcutId === "transcribe_mouse" && (
+          <button
+            className="px-2 py-1 text-sm border rounded-md"
+            onClick={() =>
+              void updateBinding(shortcutId, "").catch((error) =>
+                notify({
+                  title: t("settings.general.shortcut.errors.set", {
+                    error: String(error),
+                  }),
+                }),
+              )
+            }
+            disabled={
+              disabled ||
+              capturing ||
+              !binding.current_binding ||
+              isUpdating(`binding_${shortcutId}`)
+            }
+          >
+            {t("common.clear")}
+          </button>
         )}
         <ResetButton
           ariaLabel={t("common.resetSetting", { setting: translatedName })}

@@ -683,6 +683,19 @@ impl TranscriptionManager {
             }
         }
 
+        if model_id == crate::managers::model::BUNDLED_MODEL_ID {
+            let warmup = self.engine.transcribe(
+                vec![0.0; 16_000],
+                RunOptions {
+                    language: Some("zh".to_string()),
+                    ..Default::default()
+                },
+            );
+            match warmup {
+                Ok(_) => info!("Bundled SenseVoice Q5 warmup complete (language=zh, no download)"),
+                Err(error) => warn!("Model loaded but warmup did not complete: {}", error),
+            }
+        }
         let load_duration = load_start.elapsed();
         debug!(
             "Successfully loaded transcription model: {} (took {}ms)",

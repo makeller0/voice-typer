@@ -577,7 +577,16 @@ pub struct TranscriptionCoordinator {
 }
 
 pub fn is_transcribe_binding(id: &str) -> bool {
-    id == "transcribe" || id == "transcribe_with_post_process"
+    id == "transcribe" || id == "transcribe_mouse" || id == "transcribe_with_post_process"
+}
+
+#[test]
+fn mouse_and_keyboard_use_the_transcription_lifecycle() {
+    assert!(is_transcribe_binding("transcribe_mouse"));
+    assert!(is_transcribe_binding("transcribe"));
+    assert!(!is_transcribe_binding("cancel"));
+    assert!(!is_transcribe_binding(""));
+    assert!(!is_transcribe_binding("unknown"));
 }
 
 impl TranscriptionCoordinator {

@@ -605,11 +605,11 @@ fn default_autostart_enabled() -> bool {
 }
 
 fn default_update_checks_enabled() -> bool {
-    true
+    false
 }
 
 fn default_show_whats_new_on_update() -> bool {
-    true
+    false
 }
 
 fn default_whats_new_last_seen_version() -> String {
@@ -617,7 +617,7 @@ fn default_whats_new_last_seen_version() -> String {
 }
 
 fn default_selected_language() -> String {
-    "auto".to_string()
+    "zh".to_string()
 }
 
 fn default_overlay_position() -> OverlayPosition {
@@ -652,12 +652,7 @@ fn default_filler_word_removal_enabled() -> bool {
 }
 
 fn default_chinese_script() -> ChineseScript {
-    crate::system_languages::suggested_chinese_script(
-        crate::system_languages::system_languages()
-            .iter()
-            .map(String::as_str),
-    )
-    .unwrap_or_default()
+    ChineseScript::Simplified
 }
 
 fn default_debug_mode() -> bool {
@@ -715,9 +710,7 @@ fn default_post_process_enabled() -> bool {
 }
 
 fn default_app_language() -> String {
-    tauri_plugin_os::locale()
-        .map(|l| l.replace('_', "-"))
-        .unwrap_or_else(|| "en".to_string())
+    "zh".to_string()
 }
 
 fn default_show_tray_icon() -> bool {
@@ -968,6 +961,16 @@ pub fn get_default_settings() -> AppSettings {
 
     let mut bindings = HashMap::new();
     bindings.insert(
+        "transcribe_mouse".to_string(),
+        ShortcutBinding {
+            id: "transcribe_mouse".to_string(),
+            name: "Mouse transcription".to_string(),
+            description: "Hold the mouse side button to dictate.".to_string(),
+            default_binding: "MouseX1".to_string(),
+            current_binding: "MouseX1".to_string(),
+        },
+    );
+    bindings.insert(
         "transcribe".to_string(),
         ShortcutBinding {
             id: "transcribe".to_string(),
@@ -1011,7 +1014,7 @@ pub fn get_default_settings() -> AppSettings {
     AppSettings {
         settings_schema_version: default_settings_schema_version(),
         bindings,
-        shortcut_activation: ShortcutActivation::default(),
+        shortcut_activation: ShortcutActivation::PushToTalk,
         hold_threshold_ms: default_hold_threshold_ms(),
         audio_feedback: false,
         audio_feedback_volume: default_audio_feedback_volume(),
@@ -1021,21 +1024,21 @@ pub fn get_default_settings() -> AppSettings {
         update_checks_enabled: default_update_checks_enabled(),
         show_whats_new_on_update: default_show_whats_new_on_update(),
         whats_new_last_seen_version: default_whats_new_last_seen_version(),
-        selected_model: "".to_string(),
-        onboarding_completed: false,
+        selected_model: crate::managers::model::BUNDLED_MODEL_ID.to_string(),
+        onboarding_completed: true,
         always_on_microphone: false,
-        spoken_languages: Vec::new(),
+        spoken_languages: vec!["zh".to_string()],
         selected_microphone: None,
         selected_channel: None,
         clamshell_microphone: None,
         selected_output_device: None,
         translate_to_english: false,
-        selected_language: "auto".to_string(),
+        selected_language: default_selected_language(),
         overlay_position: default_overlay_position(),
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),
-        model_unload_timeout: ModelUnloadTimeout::default(),
+        model_unload_timeout: ModelUnloadTimeout::Never,
         word_correction_threshold: default_word_correction_threshold(),
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
@@ -1239,8 +1242,7 @@ fn apply_settings_migrations(
 
     // One-time shortcut activation migration (only while the new key is
     // absent): the retired `push_to_talk` bool maps onto the two legacy modes so
-    // upgrading users keep exactly the behavior they had. Only fresh installs
-    // get the hold-or-toggle default.
+    // upgrading users keep exactly the behavior they had.
     if settings_value.get("shortcut_activation").is_none() {
         if let Some(push_to_talk) = settings_value.get("push_to_talk").and_then(|v| v.as_bool()) {
             settings.shortcut_activation = if push_to_talk {
@@ -1249,6 +1251,8 @@ fn apply_settings_migrations(
                 ShortcutActivation::Toggle
             };
             updated = true;
+        } else {
+            settings.shortcut_activation = ShortcutActivation::HoldOrToggle;
         }
     }
 
@@ -1815,6 +1819,51 @@ mod tests {
             settings.settings_schema_version,
             CURRENT_SETTINGS_SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn chinese_edition_defaults_are_offline_and_ready() {
+        let settings = get_default_settings();
+        assert_eq!(
+            settings.selected_model,
+            crate::managers::model::BUNDLED_MODEL_ID
+        );
+        assert!(settings.onboarding_completed);
+        assert_eq!(settings.selected_language, "zh");
+        assert_eq!(settings.spoken_languages, ["zh"]);
+        assert_eq!(settings.app_language, "zh");
+        assert_eq!(settings.chinese_script, ChineseScript::Simplified);
+        assert_eq!(settings.shortcut_activation, ShortcutActivation::PushToTalk);
+        assert_eq!(settings.model_unload_timeout, ModelUnloadTimeout::Never);
+        assert!(!settings.update_checks_enabled);
+        assert!(!settings.post_process_enabled);
+        assert_eq!(
+            settings.bindings["transcribe_mouse"].current_binding,
+            "MouseX1"
+        );
+        assert!(!settings.bindings["transcribe"].current_binding.is_empty());
+    }
+
+    #[test]
+    fn cleared_mouse_binding_and_existing_preferences_round_trip() {
+        let mut settings = get_default_settings();
+        settings
+            .bindings
+            .get_mut("transcribe_mouse")
+            .unwrap()
+            .current_binding
+            .clear();
+        settings.selected_language = "en".to_string();
+        settings.app_language = "de".to_string();
+        settings.model_unload_timeout = ModelUnloadTimeout::Min5;
+        let raw = serde_json::to_value(&settings).unwrap();
+        let loaded: AppSettings = serde_json::from_value(raw).unwrap();
+        assert!(loaded.bindings["transcribe_mouse"]
+            .current_binding
+            .is_empty());
+        assert_eq!(loaded.selected_language, "en");
+        assert_eq!(loaded.app_language, "de");
+        assert_eq!(loaded.model_unload_timeout, ModelUnloadTimeout::Min5);
     }
 
     #[cfg(not(target_os = "linux"))]

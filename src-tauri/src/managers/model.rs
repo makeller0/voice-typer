@@ -64,6 +64,60 @@ pub struct ModelInfo {
 }
 
 const CHINESE_LANGUAGE_CODE: &str = "zh";
+pub const BUNDLED_MODEL_ID: &str = "sensevoice-q5-bundled";
+pub const BUNDLED_MODEL_FILE: &str = "SenseVoiceSmall-Q5_K_M.gguf";
+
+fn bundled_model() -> ModelInfo {
+    ModelInfo {
+        id: BUNDLED_MODEL_ID.to_string(),
+        name: "SenseVoiceSmall Q5_K_M".to_string(),
+        description: String::new(),
+        filename: BUNDLED_MODEL_FILE.to_string(),
+        source: ModelSource::Local,
+        size_mb: 173,
+        is_downloaded: false,
+        is_downloading: false,
+        partial_size: 0,
+        accuracy_score: 0.9,
+        speed_score: 0.9,
+        supports_translation: false,
+        is_recommended: true,
+        supported_languages: vec![
+            "zh".to_string(),
+            "en".to_string(),
+            "ja".to_string(),
+            "ko".to_string(),
+            "yue".to_string(),
+        ],
+        supports_language_selection: true,
+        is_custom: false,
+        supports_streaming: false,
+        supports_language_detection: false,
+    }
+}
+
+#[test]
+fn bundled_q5_has_no_remote_source() {
+    let model = bundled_model();
+    assert!(matches!(model.source, ModelSource::Local));
+    assert_eq!(model.filename, "SenseVoiceSmall-Q5_K_M.gguf");
+    assert!(!model.is_downloaded);
+    let mut models = HashMap::new();
+    models.insert(model.id.clone(), model.clone());
+    assert!(!ModelManager::selected_model_is_available(
+        &models,
+        BUNDLED_MODEL_ID
+    ));
+    assert!(!ModelManager::selected_model_is_available(&models, ""));
+    assert!(!ModelManager::selected_model_is_available(
+        &models, "missing"
+    ));
+    models.get_mut(BUNDLED_MODEL_ID).unwrap().is_downloaded = true;
+    assert!(ModelManager::selected_model_is_available(
+        &models,
+        BUNDLED_MODEL_ID
+    ));
+}
 
 fn recognition_language(language: &str) -> &str {
     match language {
@@ -1062,6 +1116,7 @@ impl ModelManager {
         // only insert ids not already present) instead of showing as a bare cache
         // find. Additive — see `seed_catalog_models`.
         Self::seed_catalog_models(&mut available_models);
+        available_models.insert(BUNDLED_MODEL_ID.to_string(), bundled_model());
 
         // Auto-discover custom transcribe-cpp models (.bin / .gguf) in the models directory
         if let Err(e) = Self::discover_custom_transcribe_models(&models_dir, &mut available_models)
@@ -1241,7 +1296,7 @@ impl ModelManager {
 
     fn migrate_bundled_models(&self) -> Result<()> {
         // Check for bundled models and copy them to user directory
-        let bundled_models = ["ggml-small.bin"]; // Add other bundled models here if any
+        let bundled_models = [BUNDLED_MODEL_FILE];
 
         for filename in &bundled_models {
             let bundled_path = self.app_handle.path().resolve(
