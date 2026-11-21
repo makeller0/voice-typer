@@ -152,8 +152,13 @@ pub struct EnigoState(pub Mutex<Enigo>);
 
 impl EnigoState {
     pub fn new() -> Result<Self, String> {
-        let enigo = Enigo::new(&Settings::default())
-            .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
+        let settings = Settings {
+            #[cfg(target_os = "windows")]
+            windows_dw_extra_info: Some(crate::paste_activity::OWN_INPUT),
+            ..Settings::default()
+        };
+        let enigo =
+            Enigo::new(&settings).map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
         Ok(Self(Mutex::new(enigo)))
     }
 }
