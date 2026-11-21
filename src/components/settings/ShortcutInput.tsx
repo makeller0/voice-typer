@@ -38,7 +38,7 @@ export const ShortcutInput: React.FC<ShortcutInputProps> = ({
 
   const bindings = getSetting("bindings") || {};
 
-  usePressAway(capturing, shortcutRef, cancel);
+  usePressAway(capturing, shortcutRef, cancel, { ignoreSideButtons: true });
 
   // If still loading, show loading state
   if (isLoading) {
