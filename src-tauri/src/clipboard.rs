@@ -47,15 +47,20 @@ fn completed_paste(
     target: Option<usize>,
     ends_in_punctuation: bool,
     finished: Instant,
+    activity_before: Option<u64>,
 ) -> Option<RecentPaste> {
     result.as_ref().ok().and_then(|()| {
         target.map(|target| RecentPaste {
             finished,
             target,
             ends_in_punctuation,
-            activity: activity_token(),
+            activity: unchanged_activity(activity_before, activity_token()),
         })
     })
+}
+
+fn unchanged_activity(before: Option<u64>, after: Option<u64>) -> Option<u64> {
+    before.filter(|token| Some(*token) == after)
 }
 
 fn should_replace_punctuation(
@@ -1012,10 +1017,17 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<PasteOutcome, String
     let ends_in_punctuation = !settings.append_trailing_space
         && !settings.auto_submit
         && text.chars().last().is_some_and(is_punctuation_mark);
+    let activity_before = activity_token();
     let result = paste_as_configured(text, app_handle, settings, replace);
     if !blocked {
         if injects_keys && target == paste_target() {
-            *last_paste = completed_paste(&result, target, ends_in_punctuation, Instant::now());
+            *last_paste = completed_paste(
+                &result,
+                target,
+                ends_in_punctuation,
+                Instant::now(),
+                activity_before,
+            );
         }
         return result.map(|()| PasteOutcome::Pasted);
     }
@@ -1212,16 +1224,25 @@ mod tests {
     #[test]
     fn failed_or_unknown_target_pastes_do_not_authorize_replacement() {
         let now = Instant::now();
-        let failed = completed_paste(&Err("injection failed".into()), Some(1), true, now);
+        let failed = completed_paste(&Err("injection failed".into()), Some(1), true, now, None);
         assert!(failed.is_none());
-        assert!(completed_paste(&Ok(()), None, true, now).is_none());
-        let success = completed_paste(&Ok(()), Some(1), true, now);
+        assert!(completed_paste(&Ok(()), None, true, now, None).is_none());
+        let success = completed_paste(&Ok(()), Some(1), true, now, None);
         assert!(should_replace_punctuation(
             success.as_ref(),
             "？",
             Some(1),
             now
         ));
+    }
+
+    #[test]
+    fn input_during_paste_or_clipboard_restoration_invalidates_the_next_replacement() {
+        assert_eq!(unchanged_activity(Some(7), Some(7)), Some(7));
+        assert_eq!(unchanged_activity(Some(7), Some(8)), None);
+        assert_eq!(unchanged_activity(None, Some(8)), None);
+        assert_eq!(unchanged_activity(Some(7), None), None);
+        assert_eq!(unchanged_activity(None, None), None);
     }
 
     #[cfg(target_os = "linux")]

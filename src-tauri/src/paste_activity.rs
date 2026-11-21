@@ -198,8 +198,12 @@ mod platform {
     pub(crate) fn prepare(settings: &AppSettings) {
         let mut chords = shortcuts(settings);
         chords.sort();
+        let initial_tick = last_input().unwrap_or(0);
         if let Ok(mut state) = STATE.lock() {
-            let state = state.get_or_insert_with(Activity::default);
+            let state = state.get_or_insert_with(|| Activity {
+                last_tick: initial_tick,
+                ..Activity::default()
+            });
             if state.shortcuts != chords {
                 state.shortcuts = chords;
                 state.revision = state.revision.wrapping_add(1);
