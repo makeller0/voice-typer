@@ -1068,7 +1068,7 @@ fn paste_as_configured(
             // clipboard handling) asynchronously; on failure fall through to
             // the legacy path untouched.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            if settings.reliable_paste && replace_punctuation.is_none() {
+            let replace_punctuation = if settings.reliable_paste {
                 // Runs entirely on the main thread, as it requires.
                 let (text, app) = (text.clone(), app_handle.clone());
                 let (auto_submit, auto_submit_key, clipboard_handling) = (
@@ -1077,6 +1077,7 @@ fn paste_as_configured(
                     settings.clipboard_handling,
                 );
                 let reliable_result = with_enigo(&app_handle, move |enigo| {
+                    replace_previous_mark(enigo, replace_punctuation)?;
                     crate::paste_tx::try_reliable_paste(
                         &text,
                         &app,
@@ -1095,7 +1096,10 @@ fn paste_as_configured(
                         );
                     }
                 }
-            }
+                None
+            } else {
+                replace_punctuation
+            };
             paste_via_clipboard(
                 &text,
                 &app_handle,
