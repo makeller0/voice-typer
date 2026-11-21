@@ -186,28 +186,26 @@ const SPOKEN_PUNCTUATION: &[(&str, char)] = &[
     ("句號", '。'),
 ];
 
-/// Whether the raw text contains an explicit spoken punctuation command.
+/// Whether the entire dictation is a spoken punctuation command.
 pub(crate) fn has_spoken_punctuation(text: &str) -> bool {
+    spoken_punctuation_mark(text).is_some()
+}
+
+/// Recognizes one command surrounded only by model punctuation or whitespace.
+pub(crate) fn spoken_punctuation_mark(text: &str) -> Option<char> {
+    let command = text.trim_matches(|c: char| c.is_whitespace() || is_punctuation_mark(c));
     SPOKEN_PUNCTUATION
         .iter()
-        .any(|(word, _)| text.contains(word))
+        .find_map(|(word, mark)| (command == *word).then_some(*mark))
+}
+
+/// Sentence punctuation emitted by the recognizer, including ASCII variants.
+pub(crate) fn is_punctuation_mark(c: char) -> bool {
+    "，。！？、；：,.!?;:…".contains(c)
 }
 
 fn spoken_punctuation(text: &str) -> String {
-    let boundary = |c: char| c.is_whitespace() || "，。！？、；：,.!?;:…".contains(c);
-    let mut remaining = text;
-    let mut result = String::with_capacity(text.len());
-    while let Some((index, word, mark)) = SPOKEN_PUNCTUATION
-        .iter()
-        .filter_map(|(word, mark)| remaining.find(word).map(|index| (index, *word, *mark)))
-        .min_by_key(|(index, word, _)| (*index, std::cmp::Reverse(word.len())))
-    {
-        result.push_str(remaining[..index].trim_end_matches(boundary));
-        result.push(mark);
-        remaining = remaining[index + word.len()..].trim_start_matches(boundary);
-    }
-    result.push_str(remaining);
-    result
+    spoken_punctuation_mark(text).map_or_else(|| text.to_string(), |mark| mark.to_string())
 }
 
 #[cfg(test)]
@@ -215,15 +213,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spoken_marks_replace_commands_and_neighboring_model_punctuation() {
-        assert_eq!(spoken_punctuation("优点，冒号，简单"), "优点：简单");
-        assert_eq!(spoken_punctuation("吃饭吧感叹号。"), "吃饭吧！");
-        assert_eq!(
-            spoken_punctuation("甲 , 冒号 ： 乙 顿号、丙分号；丁问号?戊逗号，己句号。"),
-            "甲：乙、丙；丁？戊，己。"
-        );
-        assert_eq!(spoken_punctuation("太好了叹号！"), "太好了！");
-        assert_eq!(spoken_punctuation("问号感叹号"), "？！");
+    fn spoken_marks_require_a_whole_dictation_command() {
+        for (word, mark) in SPOKEN_PUNCTUATION {
+            assert_eq!(spoken_punctuation(word), mark.to_string());
+            assert_eq!(
+                spoken_punctuation(&format!(" ，{word}。 \n")),
+                mark.to_string()
+            );
+            assert!(has_spoken_punctuation(word));
+        }
     }
 
     #[test]
@@ -236,17 +234,21 @@ mod tests {
             "你今天晚上有空吗？我们一起吃饭吧！",
             "冒",
             "感叹",
+            "请按问号键",
+            "这件事情终于可以画上句号了",
+            "不要把感叹号写成问号",
+            "优点，冒号，简单",
+            "吃饭吧感叹号。",
+            "问号感叹号",
         ] {
             assert_eq!(spoken_punctuation(text), text);
+            assert!(!has_spoken_punctuation(text));
         }
     }
 
     #[test]
     fn spoken_marks_work_with_all_chinese_scripts() {
-        assert_eq!(
-            spoken_punctuation("優點，冒號，簡單頓號快速感嘆號。"),
-            "優點：簡單、快速！"
-        );
+        assert_eq!(spoken_punctuation(" 問號。 "), "？");
         for script in [
             ChineseScript::AsTranscribed,
             ChineseScript::Simplified,
@@ -254,8 +256,8 @@ mod tests {
             ChineseScript::TraditionalHk,
         ] {
             assert_eq!(
-                convert_chinese_script("问号感叹号", ChineseVariety::Mandarin, script),
-                "？！"
+                convert_chinese_script("问号。", ChineseVariety::Mandarin, script),
+                "？"
             );
         }
     }

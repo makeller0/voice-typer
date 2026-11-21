@@ -2134,8 +2134,7 @@ mod tests {
             ("逗号", "，"),
             ("句号", "。"),
             ("  ，问号。  ", "？"),
-            ("问号感叹号", "？！"),
-            ("問號感嘆號", "？！"),
+            ("問號。", "？"),
         ] {
             assert_eq!(
                 post_process_transcription_text(
@@ -2165,6 +2164,31 @@ mod tests {
                 ),
                 "",
                 "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn punctuation_names_inside_ordinary_dictation_are_preserved() {
+        let settings = AppSettings::default();
+        for raw in [
+            "请按问号键",
+            "这件事情终于可以画上句号了",
+            "不要把感叹号写成问号",
+            "请按问号键。",
+            "这件事情终于可以画上句号了。",
+            "不要把感叹号写成问号。",
+            "问号感叹号",
+        ] {
+            assert_eq!(
+                post_process_transcription_text(
+                    raw.to_string(),
+                    &settings,
+                    false,
+                    &OutputLanguageEvidence::Unknown,
+                    &languages(&["zh"]),
+                ),
+                raw
             );
         }
     }
