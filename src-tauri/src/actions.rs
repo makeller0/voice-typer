@@ -1090,6 +1090,12 @@ impl ShortcutAction for TestAction {
 pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     map.insert(
+        "transcribe_mouse".to_string(),
+        Arc::new(TranscribeAction {
+            post_process: false,
+        }) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
         "transcribe".to_string(),
         Arc::new(TranscribeAction {
             post_process: false,

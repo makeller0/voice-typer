@@ -1,12 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Handy",
+  "productName": "VoiceTyper",
+  "mainBinaryName": "voicetyper",
   "version": "0.10.1",
-  "identifier": "com.pais.handy",
+  "identifier": "com.makeller0.voicetyper",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bun scripts/prepare-bundled-model.ts && bun run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -25,7 +26,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "targets": "all",
     "resources": ["resources/**/*"],
     "license": "MIT",
@@ -74,8 +75,10 @@
       }
     },
     "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
       "signCommand": "trusted-signing-cli -e https://eus.codesigning.azure.net/ -a CJ-Signing -c cjpais-dev -d Handy %1",
       "nsis": {
+        "compression": "lzma",
         "template": "nsis/installer.nsi",
         "installerIcon": "icons/icon.ico"
       }
@@ -84,9 +87,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJBQjcyMDk1MjA2NjAxRjkKUldUNUFXWWdsU0MzdXRRZi8zYzhqV2FaNUVDbDd2Rk5VM1IvWWowVXdmRFNKQ1BrMXF5RFFsLy8K",
-      "endpoints": [
-        "https://github.com/cjpais/Handy/releases/latest/download/latest.json"
-      ]
+      "endpoints": []
     }
   }
 }

@@ -197,6 +197,10 @@ impl HandyKeysState {
 
         binding_to_hotkey.insert(binding_id.to_string(), id);
         hotkey_to_binding.insert(id, (binding_id.to_string(), hotkey_string.to_string()));
+        info!(
+            "Registered blocking shortcut: {} = {}",
+            binding_id, hotkey_string
+        );
 
         debug!(
             "Registered handy-keys shortcut: {} -> {:?}",
@@ -224,6 +228,9 @@ impl HandyKeysState {
 
     /// Register a shortcut binding
     pub fn register(&self, binding: &ShortcutBinding) -> Result<(), String> {
+        if binding.current_binding.is_empty() {
+            return Ok(());
+        }
         let (tx, rx) = mpsc::channel();
         self.command_sender
             .lock()

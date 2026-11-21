@@ -135,6 +135,9 @@ fn reconcile_cancel_shortcut(app: &AppHandle) {
 
 /// Register a shortcut using the appropriate implementation
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    if binding.current_binding.is_empty() {
+        return Ok(());
+    }
     let settings = get_settings(app);
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => tauri_impl::register_shortcut(app, binding),
@@ -171,8 +174,7 @@ pub fn change_binding(
     id: String,
     binding: String,
 ) -> Result<BindingResponse, String> {
-    // Reject empty bindings — every shortcut should have a value
-    if binding.trim().is_empty() {
+    if binding.trim().is_empty() && id != "transcribe_mouse" {
         return Err("Binding cannot be empty".to_string());
     }
 
@@ -228,7 +230,8 @@ pub fn change_binding(
     }
 
     // Validate the new shortcut for the current keyboard implementation
-    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
+    if let Err(e) =
+        validate_binding_for_implementation(&id, &binding, settings.keyboard_implementation)
     {
         warn!("change_binding validation error: {}", e);
         restore_registration(&app, &binding_to_modify);
@@ -275,6 +278,33 @@ fn restore_registration(app: &AppHandle, binding: &ShortcutBinding) {
             binding.id, binding.current_binding, e
         );
     }
+}
+
+fn validate_binding_for_implementation(
+    id: &str,
+    binding: &str,
+    implementation: KeyboardImplementation,
+) -> Result<(), String> {
+    if id == "transcribe_mouse" && binding.is_empty() {
+        return Ok(());
+    }
+    validate_shortcut_for_implementation(binding, implementation)
+}
+
+#[test]
+fn mouse_bindings_can_be_changed_or_cleared_but_not_set_to_invalid_keys() {
+    let implementation = KeyboardImplementation::HandyKeys;
+    for binding in ["MouseX1", "MouseX2", "ctrl+space", ""] {
+        assert!(
+            validate_binding_for_implementation("transcribe_mouse", binding, implementation)
+                .is_ok()
+        );
+    }
+    assert!(
+        validate_binding_for_implementation("transcribe_mouse", "not-a-key", implementation)
+            .is_err()
+    );
+    assert!(validate_binding_for_implementation("transcribe", "", implementation).is_err());
 }
 
 #[tauri::command]
@@ -516,6 +546,10 @@ fn register_all_shortcuts_for_implementation(
             .get(id)
             .cloned()
             .unwrap_or_else(|| default_binding.clone());
+
+        if binding.current_binding.is_empty() {
+            continue;
+        }
 
         // Validate the shortcut for the target implementation
         if let Err(e) =

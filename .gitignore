@@ -45,3 +45,5 @@ result
 
 # Python bytecode (scripts/)
 __pycache__/
+
+src-tauri/resources/models/SenseVoiceSmall-Q5_K_M.gguf

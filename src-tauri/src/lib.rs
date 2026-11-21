@@ -63,6 +63,15 @@ use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKi
 
 use crate::settings::get_settings;
 
+#[cfg(target_os = "windows")]
+const OFFLINE_WEBVIEW_ARGS: &str = concat!(
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection ",
+    "--autoplay-policy=no-user-gesture-required ",
+    "--disable-background-networking --disable-component-update ",
+    "--disable-domain-reliability --disable-sync --no-proxy-server ",
+    "--host-resolver-rules=\"MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE *.localhost\""
+);
+
 // Global atomic to store the file log level filter
 // We use u8 to store the log::LevelFilter as a number
 pub static FILE_LOG_LEVEL: AtomicU8 = AtomicU8::new(log::LevelFilter::Debug as u8);
@@ -74,6 +83,21 @@ pub static FILE_LOG_LEVEL: AtomicU8 = AtomicU8::new(log::LevelFilter::Debug as u
 /// paths or transcribed text) onto the frontend event bus. Synced at startup
 /// and whenever debug mode is toggled (see `shortcut::change_debug_mode_setting`).
 pub static WEBVIEW_LOG_STREAMING: AtomicBool = AtomicBool::new(false);
+
+#[cfg(all(test, target_os = "windows"))]
+mod offline_webview_tests {
+    #[test]
+    fn blocks_remote_hosts_but_preserves_local_app_and_ipc_origins() {
+        let arguments = super::OFFLINE_WEBVIEW_ARGS;
+        assert!(arguments.contains("--disable-background-networking"));
+        assert!(arguments.contains("--disable-component-update"));
+        assert!(arguments.contains("--no-proxy-server"));
+        assert!(arguments.contains("MAP * ~NOTFOUND"));
+        assert!(arguments.contains("EXCLUDE localhost"));
+        assert!(arguments.contains("EXCLUDE *.localhost"));
+        assert!(arguments.contains("msSmartScreenProtection"));
+    }
+}
 
 fn level_filter_from_u8(value: u8) -> log::LevelFilter {
     match value {
@@ -198,6 +222,18 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
     false
 }
 
+fn should_preload_model(timeout: settings::ModelUnloadTimeout) -> bool {
+    timeout != settings::ModelUnloadTimeout::Immediately
+}
+
+#[test]
+fn startup_preload_respects_unload_timeout() {
+    use settings::ModelUnloadTimeout;
+    assert!(!should_preload_model(ModelUnloadTimeout::Immediately));
+    assert!(should_preload_model(ModelUnloadTimeout::Never));
+    assert!(should_preload_model(ModelUnloadTimeout::Min5));
+}
+
 fn initialize_core_logic(app_handle: &AppHandle) {
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
@@ -227,6 +263,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
     app_handle.manage(TranscriptionJobManager::new(app_handle));
+    if should_preload_model(get_settings(app_handle).model_unload_timeout) {
+        transcription_manager.initiate_model_load(true);
+    }
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -1018,7 +1057,7 @@ pub fn run(cli_args: CliArgs) {
             // for portable mode (redirects WebView2 cache to portable Data dir)
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                    .title("Handy")
+                    .title("VoiceTyper")
                     .inner_size(utils::MAIN_WINDOW_SIZE.0, utils::MAIN_WINDOW_SIZE.1)
                     .min_inner_size(utils::MAIN_WINDOW_SIZE.0, utils::MAIN_WINDOW_SIZE.1)
                     .resizable(true)
@@ -1027,6 +1066,11 @@ pub fn run(cli_args: CliArgs) {
 
             if let Some(data_dir) = portable::data_dir() {
                 win_builder = win_builder.data_directory(data_dir.join("webview"));
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                win_builder = win_builder.additional_browser_args(OFFLINE_WEBVIEW_ARGS);
             }
 
             // Only used on macOS (to size it) and Windows (to disable WebView2
