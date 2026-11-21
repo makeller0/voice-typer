@@ -257,11 +257,15 @@ pub(super) fn run(
     text: &str,
     app_handle: &AppHandle,
     paste_method: &PasteMethod,
-    enigo: &mut enigo::Enigo,
+    input: (
+        &mut enigo::Enigo,
+        impl FnOnce(&mut enigo::Enigo) -> Result<(), String>,
+    ),
     auto_submit: bool,
     auto_submit_key: AutoSubmitKey,
     clipboard_handling: ClipboardHandling,
 ) -> Result<(), String> {
+    let (enigo, before_paste) = input;
     // Settle any previous transaction first so the snapshot below captures the
     // user's original clipboard, not the previous transcript.
     flush_pending(app_handle, enigo);
@@ -301,7 +305,7 @@ pub(super) fn run(
     if let Ok(mut st) = state.lock() {
         st.injected_at = Some(Instant::now());
     }
-    match send_chord(enigo, paste_method) {
+    match before_paste(enigo).and_then(|()| send_chord(enigo, paste_method)) {
         Ok(()) => {
             info!("[reliable-paste] paste chord sent ({paste_method:?})");
         }

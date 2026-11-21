@@ -1089,12 +1089,13 @@ fn paste_as_configured(
                     settings.clipboard_handling,
                 );
                 let reliable_result = with_enigo(&app_handle, move |enigo| {
-                    replace_previous_mark(enigo, replace_punctuation)?;
                     crate::paste_tx::try_reliable_paste(
                         &text,
                         &app,
                         &paste_method,
-                        enigo,
+                        (enigo, move |enigo| {
+                            replace_previous_mark(enigo, replace_punctuation)
+                        }),
                         auto_submit,
                         auto_submit_key,
                         clipboard_handling,
@@ -1108,7 +1109,7 @@ fn paste_as_configured(
                         );
                     }
                 }
-                None
+                replace_punctuation
             } else {
                 replace_punctuation
             };

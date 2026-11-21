@@ -195,7 +195,10 @@ pub(crate) fn try_reliable_paste(
     text: &str,
     app_handle: &tauri::AppHandle,
     paste_method: &crate::settings::PasteMethod,
-    enigo: &mut enigo::Enigo,
+    input: (
+        &mut enigo::Enigo,
+        impl FnOnce(&mut enigo::Enigo) -> Result<(), String>,
+    ),
     auto_submit: bool,
     auto_submit_key: crate::settings::AutoSubmitKey,
     clipboard_handling: crate::settings::ClipboardHandling,
@@ -204,16 +207,46 @@ pub(crate) fn try_reliable_paste(
         text,
         app_handle,
         paste_method,
-        enigo,
+        input,
         auto_submit,
         auto_submit_key,
         clipboard_handling,
     )
 }
 
+fn after_preparation<T>(
+    prepared: Result<(), String>,
+    inject: impl FnOnce() -> T,
+) -> Result<T, String> {
+    prepared.map(|()| inject())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_preparation_never_injects_or_deletes() {
+        let called = std::cell::Cell::new(false);
+        let result = after_preparation(Err("clipboard locked".into()), || called.set(true));
+        assert!(result.is_err());
+        assert!(!called.get());
+    }
+
+    #[test]
+    fn successful_preparation_runs_injection_and_keeps_its_error_distinct() {
+        let mut calls = 0;
+        assert_eq!(
+            after_preparation(Ok(()), || {
+                calls += 1;
+                42
+            }),
+            Ok(42)
+        );
+        assert_eq!(calls, 1);
+        let result = after_preparation(Ok(()), || Err::<(), _>("injection failed"));
+        assert_eq!(result, Ok(Err("injection failed")));
+    }
 
     fn state_after_publish(published_ago: Duration) -> TxState {
         let mut s = TxState::new();
