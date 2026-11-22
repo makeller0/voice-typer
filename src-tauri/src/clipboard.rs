@@ -277,6 +277,8 @@ fn paste_via_clipboard(
             })?;
         }
 
+        info!("Legacy paste chord sent; target acceptance cannot be verified");
+
         Ok(())
     })();
 

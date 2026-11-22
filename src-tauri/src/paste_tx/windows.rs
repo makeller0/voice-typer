@@ -451,7 +451,7 @@ fn on_timer(_hwnd: HWND, shared: &WinTxShared) {
     } else if injection_failed {
         info!("[reliable-paste] settling: chord injection failed, restoring quickly");
     } else {
-        info!("[reliable-paste] settling: no read within timeout, restoring anyway");
+        warn!("[reliable-paste] no clipboard read after paste chord; insertion unconfirmed (target may not have focus); restoring without retry to avoid duplicate text");
     }
 
     // Auto-submit only once the target demonstrably read the transcript;
