@@ -125,7 +125,10 @@ fn a_recording_of_only_zeros_is_silent_input() {
     let mut h = harness(VadPolicy::Offline);
     h.sink.process_chunk(chunk(&[0.0; FRAME], FRAME));
     h.sink.process_chunk(chunk(&[0.0; FRAME], FRAME));
-    assert!(h.sink.finish().input_silent);
+    let captured = h.sink.finish();
+    assert!(captured.input_silent);
+    assert_eq!(captured.received_samples, FRAME * 2);
+    assert!(captured.samples.is_empty());
 }
 
 #[test]
@@ -133,7 +136,9 @@ fn a_recording_stopped_before_any_audio_is_not_silent_input() {
     // A quick tap that ends before the device delivers its first chunk says
     // nothing about the microphone.
     let h = harness(VadPolicy::Offline);
-    assert!(!h.sink.finish().input_silent);
+    let captured = h.sink.finish();
+    assert!(!captured.input_silent);
+    assert_eq!(captured.received_samples, 0);
 }
 
 #[test]
@@ -144,6 +149,7 @@ fn sound_counts_even_when_vad_drops_it() {
     let captured = h.sink.finish();
     assert!(captured.samples.is_empty());
     assert!(!captured.input_silent);
+    assert_eq!(captured.received_samples, FRAME);
 }
 
 #[test]

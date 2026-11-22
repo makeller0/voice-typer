@@ -777,7 +777,24 @@ impl ShortcutAction for TranscribeAction {
                     // Tear down any streaming worker so its channel doesn't leak
                     // and block the next start_stream.
                     tm.cancel_stream();
-                    finish_without_text(&ah, input_silent, 0, stop_time);
+                    if rm.last_capture_failed() {
+                        warn!(
+                            "No usable audio: capture failed or delivered no samples before stop"
+                        );
+                        notices::raise(
+                            &ah,
+                            Notice::new(NoticeCode::RecordingFailed, NoticeSource::Dictation),
+                        );
+                        set_tray_state(&ah, TrayIconState::Idle);
+                        emit_transcription_complete(
+                            &ah,
+                            TranscriptionOutcome::Failed,
+                            0,
+                            stop_time,
+                        );
+                    } else {
+                        finish_without_text(&ah, input_silent, 0, stop_time);
+                    }
                 } else {
                     // Save WAV concurrently with transcription
                     let sample_count = samples.len();

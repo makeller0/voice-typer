@@ -69,6 +69,8 @@ pub type AudioFrameCallback = Arc<dyn Fn(&[f32]) + Send + Sync + 'static>;
 
 /// What a finished recording hands back.
 pub struct CapturedAudio {
+    /// Real 16 kHz mono samples delivered before VAD, excluding chunk padding.
+    pub received_samples: usize,
     /// 16 kHz mono samples that passed the VAD policy.
     pub samples: Vec<f32>,
     /// Every sample received (pre-VAD) was exactly zero, e.g. a muted mic.
@@ -92,6 +94,7 @@ pub struct CaptureSink {
     ready: Option<mpsc::Sender<()>>,
     samples: Vec<f32>,
     heard_sound: bool,
+    received_samples: usize,
 }
 
 /// Spectrum window at 16 kHz: 32 ms, near the overlay's ~30 Hz refresh.
@@ -128,6 +131,7 @@ impl CaptureSink {
             ready: Some(ready),
             samples: Vec::new(),
             heard_sound: false,
+            received_samples: 0,
         }
     }
 
@@ -156,6 +160,7 @@ impl CaptureSink {
             }
         }
         CapturedAudio {
+            received_samples: self.received_samples,
             samples: self.samples,
             // `ready` is spent on the first chunk, so `None` means audio came.
             input_silent: self.ready.is_none() && !self.heard_sound,
@@ -171,6 +176,7 @@ impl CaptureSink {
 
 impl Sink for CaptureSink {
     fn process_chunk(&mut self, chunk: AudioChunk<'_>) {
+        self.received_samples += chunk.valid_frames;
         if let Some(ready) = self.ready.take() {
             let _ = ready.send(());
         }
