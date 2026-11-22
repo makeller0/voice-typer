@@ -11,6 +11,8 @@
 
 mod handler;
 pub mod handy_keys;
+#[cfg(target_os = "windows")]
+pub mod startup_keyboard;
 pub mod tauri_impl;
 
 use log::{debug, error, info, warn};

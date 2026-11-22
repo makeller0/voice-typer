@@ -22,6 +22,10 @@ const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const SILERO_VAD_THRESHOLD: f32 = 0.3;
 const EARSHOT_VAD_THRESHOLD: f32 = 0.5;
 
+fn capture_failed(received_samples: usize, end_reason: &EndReason) -> bool {
+    received_samples == 0 || !matches!(end_reason, EndReason::StopCalled)
+}
+
 fn set_mute(mute: bool) {
     // Expected behavior:
     // - Windows: works on most systems using standard audio drivers.
@@ -513,6 +517,7 @@ pub struct AudioRecordingManager {
     cached_device: Arc<Mutex<Option<(String, String)>>>,
     /// The last recording was all-zero samples, not just audio without speech.
     last_input_silent: Arc<AtomicBool>,
+    last_capture_failed: Arc<AtomicBool>,
 }
 
 impl AudioRecordingManager {
@@ -555,6 +560,7 @@ impl AudioRecordingManager {
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
             last_input_silent: Arc::new(AtomicBool::new(false)),
+            last_capture_failed: Arc::new(AtomicBool::new(false)),
         };
 
         // Always-on?  Open immediately.
@@ -976,6 +982,14 @@ impl AudioRecordingManager {
                     );
                 }
                 let captured = stopped.sink.finish();
+                info!(
+                    "Capture completed: received_samples={}, retained_samples={}, input_silent={}, end_reason={:?}",
+                    captured.received_samples, captured.samples.len(), captured.input_silent, stopped.end_reason
+                );
+                self.last_capture_failed.store(
+                    capture_failed(captured.received_samples, &stopped.end_reason),
+                    Ordering::Release,
+                );
                 self.return_vad(captured.vad);
                 self.last_input_silent
                     .store(captured.input_silent, Ordering::Release);
@@ -984,6 +998,7 @@ impl AudioRecordingManager {
             Err(e) => {
                 // The recording and its detector are lost with the sink.
                 error!("Failed to stop recording: {e}");
+                self.last_capture_failed.store(true, Ordering::Release);
                 self.last_input_silent.store(false, Ordering::Release);
                 if e.kind() != ErrorKind::NotRecording {
                     microphone.failed.store(true, Ordering::Release);
@@ -1237,6 +1252,10 @@ impl AudioRecordingManager {
         self.last_input_silent.load(Ordering::Acquire)
     }
 
+    pub fn last_capture_failed(&self) -> bool {
+        self.last_capture_failed.load(Ordering::Acquire)
+    }
+
     pub fn was_cancelled_since(&self, generation: u64) -> bool {
         self.cancel_generation.load(Ordering::Acquire) != generation
     }
@@ -1278,6 +1297,7 @@ impl AudioRecordingManager {
                     Some(microphone) => self.collect_recording(microphone),
                     None => {
                         error!("Recorder not available");
+                        self.last_capture_failed.store(true, Ordering::Release);
                         self.last_input_silent.store(false, Ordering::Release);
                         Vec::new()
                     }
@@ -1360,6 +1380,20 @@ impl AudioRecordingManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_failure_distinguishes_no_delivery_from_vad_filtered_audio() {
+        assert!(capture_failed(0, &EndReason::StopCalled));
+        assert!(!capture_failed(512, &EndReason::StopCalled));
+        assert!(capture_failed(
+            512,
+            &EndReason::SinkPanicked("failed".into())
+        ));
+        assert!(capture_failed(
+            512,
+            &EndReason::RecorderFailed(recorder_error())
+        ));
+    }
 
     /// A recorder error, without touching a device: the request is rejected
     /// before one is opened.

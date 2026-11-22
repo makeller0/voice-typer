@@ -731,6 +731,8 @@ Section Install
 
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
+  Delete "$INSTDIR\ggml-vulkan.dll"
+
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
 

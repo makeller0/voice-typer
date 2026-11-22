@@ -3,7 +3,9 @@ use crate::audio_toolkit::{
     apply_custom_words, detect_output_language, normalize_transcription_output,
     remove_filler_words, OutputLanguageEvidence,
 };
-use crate::chinese_script::{chinese_variety_for_text, convert_chinese_script};
+use crate::chinese_script::{
+    chinese_variety_for_text, convert_chinese_script, has_spoken_punctuation,
+};
 use crate::engine_supervisor::{
     CancelMark, DeviceInfo, DeviceSelector, EngineError, EngineSupervisor, LoadSpec, LoadedInfo,
     Unloading,
@@ -1706,6 +1708,7 @@ fn post_process_transcription_text(
     supported_languages: &[String],
 ) -> String {
     fail_open_text_transform(raw, |raw| {
+        let raw_chars = raw.chars().count();
         // Last-resort language evidence: confidence-gated detection from the
         // transcribed text itself, constrained to the model's languages. Only
         // consulted when it can change the outcome (built-in gated fillers).
@@ -1728,7 +1731,9 @@ fn post_process_transcription_text(
         // Convert the script before custom words so they match in the script
         // the user writes in. Decided from the text, since mixed Mandarin/English
         // is often detected as English; Japanese is never rewritten.
-        let raw = match chinese_variety_for_text(&raw, &output_language) {
+        let variety = chinese_variety_for_text(&raw, &output_language);
+        let has_spoken_command = variety.is_some() && has_spoken_punctuation(&raw);
+        let raw = match variety {
             Some(variety) => convert_chinese_script(&raw, variety, settings.chinese_script),
             None => raw,
         };
@@ -1752,9 +1757,13 @@ fn post_process_transcription_text(
 
         let text = normalize_transcription_output(&without_fillers);
         // Short, wordless clips often come back as just "." or "?".
-        if text.chars().any(char::is_alphanumeric) {
+        if has_spoken_command || text.chars().any(char::is_alphanumeric) {
             text
         } else {
+            info!(
+                "Transcript cleanup produced no text: raw_chars={raw_chars}, normalized_chars={}, spoken_command={has_spoken_command}; no letters or digits remain",
+                text.chars().count()
+            );
             String::new()
         }
     })
@@ -1861,10 +1870,7 @@ fn drain_until_finalize(rx: mpsc::Receiver<StreamCmd>) {
 /// a background thread instead of its startup path.
 pub fn report_compute_devices(tm: &TranscriptionManager) {
     if transcribe_gpu_disabled_for_host() {
-        warn!(
-            "Windows x64 build is running under emulation on an ARM64 host; \
-             disabling transcribe.cpp GPU acceleration and using CPU"
-        );
+        info!("transcribe.cpp GPU acceleration is unavailable in this build; using CPU");
     }
     match transcribe_compute_devices(&tm.engine) {
         Ok(devices) => info!(
@@ -1947,7 +1953,7 @@ pub struct GpuDeviceOption {
 }
 
 fn transcribe_gpu_disabled_for_host() -> bool {
-    crate::utils::is_windows_x64_emulated_on_arm64()
+    cfg!(target_os = "windows")
 }
 
 fn effective_transcribe_accelerator(
@@ -2014,6 +2020,28 @@ pub fn get_available_accelerators(tm: &TranscriptionManager) -> AvailableAcceler
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_build_ignores_persisted_gpu_choices() {
+        assert!(transcribe_gpu_disabled_for_host());
+        for setting in [
+            TranscribeAcceleratorSetting::Auto,
+            TranscribeAcceleratorSetting::Cpu,
+            TranscribeAcceleratorSetting::Gpu,
+        ] {
+            assert_eq!(select_transcribe_backend(setting), Backend::Cpu);
+        }
+        assert_eq!(available_transcribe_accelerators(true), ["cpu"]);
+        assert_eq!(
+            resolve_gpu_device(TranscribeAcceleratorSetting::Gpu, None),
+            None
+        );
+        assert_eq!(
+            resolve_gpu_device(TranscribeAcceleratorSetting::Gpu, Some("stale-device")),
+            None
+        );
+    }
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
@@ -2095,6 +2123,78 @@ mod tests {
             );
 
             assert_eq!(result, "学校に行きます", "{evidence:?}");
+        }
+    }
+
+    #[test]
+    fn punctuation_only_spoken_commands_survive_final_cleanup() {
+        let settings = AppSettings::default();
+        for (raw, expected) in [
+            ("冒号", "："),
+            ("顿号", "、"),
+            ("感叹号", "！"),
+            ("叹号", "！"),
+            ("分号", "；"),
+            ("问号", "？"),
+            ("逗号", "，"),
+            ("句号", "。"),
+            ("  ，问号。  ", "？"),
+            ("問號。", "？"),
+        ] {
+            assert_eq!(
+                post_process_transcription_text(
+                    raw.to_string(),
+                    &settings,
+                    false,
+                    &OutputLanguageEvidence::Unknown,
+                    &languages(&["zh"]),
+                ),
+                expected,
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn wordless_model_output_without_spoken_commands_is_still_dropped() {
+        let settings = AppSettings::default();
+        for raw in ["", " ", ".", "?", "？！", "， 。 ！", "...", "\u{200B}"] {
+            assert_eq!(
+                post_process_transcription_text(
+                    raw.to_string(),
+                    &settings,
+                    false,
+                    &OutputLanguageEvidence::Unknown,
+                    &languages(&["zh"]),
+                ),
+                "",
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn punctuation_names_inside_ordinary_dictation_are_preserved() {
+        let settings = AppSettings::default();
+        for raw in [
+            "请按问号键",
+            "这件事情终于可以画上句号了",
+            "不要把感叹号写成问号",
+            "请按问号键。",
+            "这件事情终于可以画上句号了。",
+            "不要把感叹号写成问号。",
+            "问号感叹号",
+        ] {
+            assert_eq!(
+                post_process_transcription_text(
+                    raw.to_string(),
+                    &settings,
+                    false,
+                    &OutputLanguageEvidence::Unknown,
+                    &languages(&["zh"]),
+                ),
+                raw
+            );
         }
     }
 

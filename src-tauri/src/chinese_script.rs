@@ -153,22 +153,114 @@ fn converter(variety: ChineseVariety, script: ChineseScript) -> Option<&'static 
     .as_ref()
 }
 
-/// Rewrites `text` into `script`. Fails open: if OpenCC can't be initialized
-/// the text is returned unchanged.
+/// Expands spoken punctuation, then rewrites `text` into `script`.
+/// If OpenCC can't be initialized, the original script is retained.
 pub fn convert_chinese_script(
     text: &str,
     variety: ChineseVariety,
     script: ChineseScript,
 ) -> String {
+    let text = spoken_punctuation(text);
     match converter(variety, script) {
-        Some(converter) => converter.convert(text),
-        None => text.to_string(),
+        Some(converter) => converter.convert(&text),
+        None => text,
     }
+}
+
+const SPOKEN_PUNCTUATION: &[(&str, char)] = &[
+    ("感叹号", '！'),
+    ("感嘆號", '！'),
+    ("叹号", '！'),
+    ("嘆號", '！'),
+    ("冒号", '：'),
+    ("冒號", '：'),
+    ("顿号", '、'),
+    ("頓號", '、'),
+    ("分号", '；'),
+    ("分號", '；'),
+    ("问号", '？'),
+    ("問號", '？'),
+    ("逗号", '，'),
+    ("逗號", '，'),
+    ("句号", '。'),
+    ("句號", '。'),
+];
+
+/// Whether the entire dictation is a spoken punctuation command.
+pub(crate) fn has_spoken_punctuation(text: &str) -> bool {
+    spoken_punctuation_mark(text).is_some()
+}
+
+/// Recognizes one command surrounded only by model punctuation or whitespace.
+pub(crate) fn spoken_punctuation_mark(text: &str) -> Option<char> {
+    let command = text.trim_matches(|c: char| c.is_whitespace() || is_punctuation_mark(c));
+    SPOKEN_PUNCTUATION
+        .iter()
+        .find_map(|(word, mark)| (command == *word).then_some(*mark))
+}
+
+/// Sentence punctuation emitted by the recognizer, including ASCII variants.
+pub(crate) fn is_punctuation_mark(c: char) -> bool {
+    "，。！？、；：,.!?;:…".contains(c)
+}
+
+fn spoken_punctuation(text: &str) -> String {
+    spoken_punctuation_mark(text).map_or_else(|| text.to_string(), |mark| mark.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spoken_marks_require_a_whole_dictation_command() {
+        for (word, mark) in SPOKEN_PUNCTUATION {
+            assert_eq!(spoken_punctuation(word), mark.to_string());
+            assert_eq!(
+                spoken_punctuation(&format!(" ，{word}。 \n")),
+                mark.to_string()
+            );
+            assert!(has_spoken_punctuation(word));
+        }
+    }
+
+    #[test]
+    fn spoken_marks_preserve_empty_plain_and_unmatched_text() {
+        for text in [
+            "",
+            " ",
+            "普通文字",
+            "这个方案有三个优点：简单、快速、安全。",
+            "你今天晚上有空吗？我们一起吃饭吧！",
+            "冒",
+            "感叹",
+            "请按问号键",
+            "这件事情终于可以画上句号了",
+            "不要把感叹号写成问号",
+            "优点，冒号，简单",
+            "吃饭吧感叹号。",
+            "问号感叹号",
+        ] {
+            assert_eq!(spoken_punctuation(text), text);
+            assert!(!has_spoken_punctuation(text));
+        }
+    }
+
+    #[test]
+    fn spoken_marks_work_with_all_chinese_scripts() {
+        assert_eq!(spoken_punctuation(" 問號。 "), "？");
+        for script in [
+            ChineseScript::AsTranscribed,
+            ChineseScript::Simplified,
+            ChineseScript::TraditionalTw,
+            ChineseScript::TraditionalHk,
+        ] {
+            assert_eq!(
+                convert_chinese_script("问号。", ChineseVariety::Mandarin, script),
+                "？"
+            );
+        }
+    }
 
     #[test]
     fn variety_comes_from_the_text_not_the_detected_language() {

@@ -451,7 +451,7 @@ fn on_timer(_hwnd: HWND, shared: &WinTxShared) {
     } else if injection_failed {
         info!("[reliable-paste] settling: chord injection failed, restoring quickly");
     } else {
-        info!("[reliable-paste] settling: no read within timeout, restoring anyway");
+        warn!("[reliable-paste] no clipboard read after paste chord; insertion unconfirmed (target may not have focus); restoring without retry to avoid duplicate text");
     }
 
     // Auto-submit only once the target demonstrably read the transcript;
@@ -575,11 +575,15 @@ pub(super) fn run(
     text: &str,
     app_handle: &tauri::AppHandle,
     paste_method: &PasteMethod,
-    enigo: &mut enigo::Enigo,
+    input: (
+        &mut enigo::Enigo,
+        impl FnOnce(&mut enigo::Enigo) -> Result<(), String>,
+    ),
     auto_submit: bool,
     auto_submit_key: AutoSubmitKey,
     clipboard_handling: ClipboardHandling,
 ) -> Result<(), String> {
+    let (enigo, before_paste) = input;
     let shared = Arc::new(WinTxShared {
         state: Mutex::new(TxState::new()),
         text: text.to_string(),
@@ -598,17 +602,15 @@ pub(super) fn run(
 
     // Wait until the transcript is actually published (or the worker reports
     // why it could not) before injecting the chord.
-    match ready_rx.recv() {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(e),
-        Err(_) => return Err("reliable paste worker died before publishing".to_string()),
-    }
-    info!("[reliable-paste] published transcript (delayed render)");
-
-    // Mark injection *before* sending: enigo holds the chord for ~100ms and a
-    // fast target may legitimately read while the chord is still held.
-    shared.state.lock().unwrap().injected_at = Some(Instant::now());
-    match send_chord(enigo, paste_method) {
+    let prepared = ready_rx
+        .recv()
+        .unwrap_or_else(|_| Err("reliable paste worker died before publishing".to_string()));
+    let injected = super::after_preparation(prepared, || {
+        info!("[reliable-paste] published transcript (delayed render)");
+        shared.state.lock().unwrap().injected_at = Some(Instant::now());
+        before_paste(enigo).and_then(|()| send_chord(enigo, paste_method))
+    })?;
+    match injected {
         Ok(()) => {
             info!("[reliable-paste] paste chord sent ({paste_method:?})");
         }

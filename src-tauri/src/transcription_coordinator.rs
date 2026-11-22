@@ -334,7 +334,7 @@ impl CoordinatorState {
                 .last_press
                 .is_some_and(|t| now.duration_since(t) < DEBOUNCE)
             {
-                debug!("Debounced press for '{}'", input.binding_id);
+                log::info!("Debounced press for '{}'", input.binding_id);
                 return None;
             }
             self.last_press = Some(now);
@@ -360,7 +360,7 @@ impl CoordinatorState {
             let remembered = self.pending_press.as_ref().map(|p| p.remembered());
             match classify_busy_input(input.is_pressed, input.mode, remembered) {
                 BusyAction::Remember => {
-                    debug!(
+                    log::info!(
                         "Remembering press for '{}': pipeline busy",
                         input.binding_id
                     );
@@ -465,7 +465,7 @@ impl CoordinatorState {
             );
             pending.locked = true;
         } else {
-            debug!(
+            log::info!(
                 "Forgetting remembered press for '{}': released after a {held:?} hold while busy",
                 release.binding_id
             );
@@ -490,6 +490,9 @@ impl CoordinatorState {
             // No hold bookkeeping means we cannot tell a tap from a hold;
             // stopping is the safe reading (it is what push-to-talk always did).
             .unwrap_or(Duration::MAX);
+        log::info!(
+            "Dictation hold ended: binding={binding_id}, held={held:?}, threshold={threshold:?}"
+        );
         if held >= threshold {
             return Some(self.begin_processing(binding_id, hotkey_string));
         }

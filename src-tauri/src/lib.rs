@@ -19,6 +19,8 @@ mod managers;
 mod memory;
 mod notices;
 mod overlay;
+#[cfg(any(target_os = "windows", test))]
+mod paste_activity;
 mod paste_tx;
 pub mod portable;
 #[cfg(target_os = "linux")]
@@ -226,6 +228,24 @@ fn should_preload_model(timeout: settings::ModelUnloadTimeout) -> bool {
     timeout != settings::ModelUnloadTimeout::Immediately
 }
 
+#[cfg(target_os = "windows")]
+fn should_initialize_startup_input(
+    onboarding_completed: bool,
+    headless_mode: bool,
+    microphone_denied: bool,
+) -> bool {
+    onboarding_completed && !headless_mode && !microphone_denied
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn startup_input_respects_onboarding_permissions_and_headless_mode() {
+    assert!(should_initialize_startup_input(true, false, false));
+    assert!(!should_initialize_startup_input(false, false, false));
+    assert!(!should_initialize_startup_input(true, false, true));
+    assert!(!should_initialize_startup_input(true, true, false));
+}
+
 #[test]
 fn startup_preload_respects_unload_timeout() {
     use settings::ModelUnloadTimeout;
@@ -234,12 +254,7 @@ fn startup_preload_respects_unload_timeout() {
     assert!(should_preload_model(ModelUnloadTimeout::Min5));
 }
 
-fn initialize_core_logic(app_handle: &AppHandle) {
-    // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
-    // The frontend is responsible for calling the `initialize_enigo` command
-    // after onboarding completes. This avoids triggering permission dialogs
-    // on macOS before the user is ready.
-
+fn initialize_core_logic(app_handle: &AppHandle, headless_mode: bool) {
     // Initialize the managers. The audio recorder receives the streaming router
     // explicitly, so always-on microphone startup can wire live-preview frames
     // even before Tauri state is populated.
@@ -263,14 +278,32 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
     app_handle.manage(TranscriptionJobManager::new(app_handle));
+    #[cfg(target_os = "windows")]
+    {
+        let settings = get_settings(app_handle);
+        let permission = commands::audio::get_windows_microphone_permission_status();
+        if should_initialize_startup_input(
+            settings.onboarding_completed,
+            headless_mode,
+            permission.supported
+                && permission.overall_access == commands::audio::PermissionAccess::Denied,
+        ) {
+            match commands::initialize_enigo(app_handle.clone()) {
+                Ok(()) => {
+                    app_handle.manage(shortcut::startup_keyboard::KeyboardPressState::default());
+                    if let Err(error) = commands::initialize_shortcuts(app_handle.clone()) {
+                        log::warn!("Failed to initialize startup shortcuts: {error}");
+                    } else {
+                        shortcut::startup_keyboard::recover_held_transcribe(app_handle);
+                    }
+                }
+                Err(error) => log::warn!("Failed to initialize startup input: {error}"),
+            }
+        }
+    }
     if should_preload_model(get_settings(app_handle).model_unload_timeout) {
         transcription_manager.initiate_model_load(true);
     }
-
-    // Note: Shortcuts are NOT initialized here.
-    // The frontend is responsible for calling the `initialize_shortcuts` command
-    // after permissions are confirmed (on macOS) or after onboarding completes.
-    // This matches the pattern used for Enigo initialization.
 
     // Set up signal handlers for toggling transcription. On Linux, SIGUSR1 is
     // deliberately not handled — it belongs to WebKitGTK's garbage collector
@@ -990,12 +1023,7 @@ pub fn run(cli_args: CliArgs) {
         .manage(cli_args.clone())
         .manage(notices::NoticeStore::default())
         .setup(move |app| {
-            #[cfg(target_os = "windows")]
-            log::info!(
-                "Vulkan layer policy: VK_LOADER_LAYERS_DISABLE={:?}, HANDY_KEEP_VULKAN_IMPLICIT_LAYERS={}",
-                std::env::var_os("VK_LOADER_LAYERS_DISABLE"),
-                utils::env_flag_enabled("HANDY_KEEP_VULKAN_IMPLICIT_LAYERS"),
-            );
+            log::debug!("Initializing application setup");
             #[cfg(target_os = "linux")]
             log::info!(
                 "GTK backend: GDK_BACKEND={:?}, HANDY_GDK_BACKEND={:?} (applied: {})",
@@ -1146,7 +1174,7 @@ pub fn run(cli_args: CliArgs) {
             let app_handle = app.handle().clone();
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
-            initialize_core_logic(&app_handle);
+            initialize_core_logic(&app_handle, headless_mode);
 
             // Secure Input monitor (macOS): detects stuck secure input that
             // silently blocks keyed shortcuts, warns the user, and activates

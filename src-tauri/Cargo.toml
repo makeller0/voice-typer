@@ -128,8 +128,7 @@ windows = { version = "0.61.3", features = [
 ] }
 winreg = "0.55"
 
-# Whisper backend per Windows arch. x86_64 ships the Vulkan GPU backend and
-# keeps the dynamic-backends posture (loadable per-ISA CPU modules + Vulkan),
+# Windows x86_64 is CPU-only and keeps loadable per-ISA CPU modules,
 # where runtime ISA scoring (GGML_CPU_ALL_VARIANTS) earns the extra shipped DLLs.
 #
 # Windows-on-ARM is CPU-only: its Adreno Vulkan drivers are immature, and
@@ -144,7 +143,6 @@ winreg = "0.55"
 [target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
 transcribe-cpp = { version = "0.4.2", default-features = false, features = [
   "dynamic-backends",
-  "vulkan",
 ] }
 
 [target.'cfg(all(windows, target_arch = "aarch64"))'.dependencies]

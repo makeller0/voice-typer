@@ -1,3 +1,4 @@
+use crate::chinese_script::is_punctuation_mark;
 use crate::input::{self, EnigoState};
 #[cfg(target_os = "linux")]
 use crate::settings::TypingTool;
@@ -8,16 +9,146 @@ use std::process::Command;
 #[cfg(target_os = "linux")]
 use std::sync::OnceLock;
 use std::sync::{mpsc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
+};
 
 #[cfg(target_os = "linux")]
 use crate::utils::{is_gnome_wayland, is_kde_wayland, is_wayland};
 
 /// Serializes pastes: overlapping ones would restore each other's transcript as
 /// the user's clipboard. Only taken by `paste`, which never runs on the main thread.
-static PASTE_LOCK: Mutex<()> = Mutex::new(());
+static PASTE_LOCK: Mutex<Option<RecentPaste>> = Mutex::new(None);
+
+struct RecentPaste {
+    finished: Instant,
+    target: usize,
+    focus: Option<usize>,
+    ends_in_punctuation: bool,
+    activity: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+struct Replacement {
+    target: usize,
+    focus: usize,
+    activity: u64,
+}
+
+fn activity_token() -> Option<u64> {
+    #[cfg(target_os = "windows")]
+    {
+        crate::paste_activity::token()
+    }
+    #[cfg(not(target_os = "windows"))]
+    None
+}
+
+fn completed_paste(
+    result: &Result<(), String>,
+    target: Option<usize>,
+    ends_in_punctuation: bool,
+    finished: Instant,
+    activity_before: Option<u64>,
+    focus: Option<usize>,
+) -> Option<RecentPaste> {
+    result.as_ref().ok().and_then(|()| {
+        target.map(|target| RecentPaste {
+            finished,
+            target,
+            focus,
+            ends_in_punctuation,
+            activity: unchanged_activity(activity_before, activity_token()),
+        })
+    })
+}
+
+fn unchanged_activity(before: Option<u64>, after: Option<u64>) -> Option<u64> {
+    before.filter(|token| Some(*token) == after)
+}
+
+fn should_replace_punctuation(
+    previous: Option<&RecentPaste>,
+    text: &str,
+    target: Option<usize>,
+    now: Instant,
+) -> bool {
+    let mut chars = text.chars();
+    let is_command_mark =
+        chars.next().is_some_and(|c| "：、！；？，。".contains(c)) && chars.next().is_none();
+    is_command_mark
+        && previous.is_some_and(|previous| {
+            previous.ends_in_punctuation
+                && Some(previous.target) == target
+                && now.saturating_duration_since(previous.finished) <= Duration::from_secs(30)
+        })
+}
+
+fn paste_target() -> Option<usize> {
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetForegroundWindow() -> isize;
+        }
+        let window = unsafe { GetForegroundWindow() };
+        (window != 0).then_some(window as usize)
+    }
+    #[cfg(not(target_os = "windows"))]
+    None
+}
+
+fn paste_focus(target: Option<usize>) -> Option<usize> {
+    #[cfg(target_os = "windows")]
+    {
+        let window = unsafe { GetForegroundWindow() };
+        if Some(window.0 as usize) != target {
+            return None;
+        }
+        let thread = unsafe { GetWindowThreadProcessId(window, None) };
+        if thread == 0 {
+            return None;
+        }
+        let mut info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..GUITHREADINFO::default()
+        };
+        unsafe { GetGUIThreadInfo(thread, &mut info) }.ok()?;
+        (info.hwndActive == window
+            && !info.hwndFocus.0.is_null()
+            && unsafe { GetForegroundWindow() } == window)
+            .then_some(info.hwndFocus.0 as usize)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = target;
+        None
+    }
+}
+
+fn same_focus(previous: Option<usize>, current: Option<usize>) -> bool {
+    previous.is_some() && previous == current
+}
+
+fn replace_previous_mark(enigo: &mut Enigo, replace: Option<Replacement>) -> Result<(), String> {
+    if replace.is_some_and(|r| {
+        Some(r.target) == paste_target()
+            && same_focus(Some(r.focus), paste_focus(Some(r.target)))
+            && Some(r.activity) == activity_token()
+    }) {
+        log::info!("Replacing previous own punctuation: sending one Backspace");
+        enigo
+            .key(Key::Backspace, Direction::Click)
+            .map_err(|e| format!("Failed to replace previous punctuation: {e}"))?;
+    } else if replace.is_some() {
+        log::info!("Punctuation replacement skipped: target, focus or activity changed; pasting without Backspace");
+    }
+    Ok(())
+}
 
 /// Runs `f` with the shared Enigo on the main thread (macOS TIS APIs require it)
 /// and waits for the result. Runs inline if already on the main thread, so no deadlock.
@@ -77,6 +208,7 @@ fn paste_via_clipboard(
     paste_method: &PasteMethod,
     paste_delay_ms: u64,
     paste_delay_after_ms: u64,
+    replace_punctuation: Option<Replacement>,
 ) -> Result<(), String> {
     let clipboard = app_handle.clipboard();
     let saved_text = clipboard.read_text().ok().filter(|t| !t.is_empty());
@@ -120,6 +252,11 @@ fn paste_via_clipboard(
     // Capture key injection errors so the original clipboard is restored before
     // propagating them to the caller.
     let paste_result = (|| -> Result<(), String> {
+        if replace_punctuation.is_some() {
+            with_enigo(app_handle, move |enigo| {
+                replace_previous_mark(enigo, replace_punctuation)
+            })?;
+        }
         // Send paste key combo
         #[cfg(target_os = "linux")]
         let key_combo_sent = try_send_key_combo_linux(paste_method);
@@ -139,6 +276,8 @@ fn paste_via_clipboard(
                 _ => Err("Invalid paste method for clipboard paste".into()),
             })?;
         }
+
+        info!("Legacy paste chord sent; target acceptance cannot be verified");
 
         Ok(())
     })();
@@ -815,6 +954,7 @@ fn paste_via_external_script(text: &str, script_path: &str) -> Result<(), String
 fn paste_direct(
     text: &str,
     app_handle: &AppHandle,
+    replace_punctuation: Option<Replacement>,
     #[cfg(target_os = "linux")] typing_tool: TypingTool,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
@@ -827,6 +967,7 @@ fn paste_direct(
 
     let text = text.to_string();
     with_enigo(app_handle, move |enigo| {
+        replace_previous_mark(enigo, replace_punctuation)?;
         input::paste_text_direct(enigo, &text)
     })
 }
@@ -900,16 +1041,52 @@ fn sends_keys(paste_method: PasteMethod) -> bool {
 /// Pastes `text` into the focused app. Call from a worker thread, never the main
 /// thread: it sleeps between steps (input injection hops via `with_enigo`).
 pub fn paste(text: String, app_handle: AppHandle) -> Result<PasteOutcome, String> {
-    let _paste = PASTE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut last_paste = PASTE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    let previous = last_paste.take();
     let settings = get_settings(&app_handle);
+    #[cfg(target_os = "windows")]
+    crate::paste_activity::prepare(&settings);
 
     // Windows drops the keystrokes Handy sends to an elevated window and may
     // not say so, so ask before pasting instead of trusting the result. The
     // paste still runs as usual; only what Handy reports changes.
     let blocked =
         sends_keys(settings.paste_method) && crate::utils::foreground_window_is_elevated();
-    let result = paste_as_configured(text, app_handle, settings);
+    let target = paste_target();
+    let focus = paste_focus(target);
+    let injects_keys = sends_keys(settings.paste_method);
+    let replace = (!blocked
+        && injects_keys
+        && previous
+            .as_ref()
+            .is_some_and(|p| same_focus(p.focus, focus))
+        && should_replace_punctuation(previous.as_ref(), &text, target, Instant::now()))
+    .then(|| previous.as_ref()?.activity)
+    .flatten()
+    .filter(|&activity| Some(activity) == activity_token())
+    .and_then(|activity| {
+        Some(Replacement {
+            target: target?,
+            focus: focus?,
+            activity,
+        })
+    });
+    let ends_in_punctuation = !settings.append_trailing_space
+        && !settings.auto_submit
+        && text.chars().last().is_some_and(is_punctuation_mark);
+    let activity_before = activity_token();
+    let result = paste_as_configured(text, app_handle, settings, replace);
     if !blocked {
+        if injects_keys && target == paste_target() && same_focus(focus, paste_focus(target)) {
+            *last_paste = completed_paste(
+                &result,
+                target,
+                ends_in_punctuation,
+                Instant::now(),
+                activity_before,
+                focus,
+            );
+        }
         return result.map(|()| PasteOutcome::Pasted);
     }
     if let Err(e) = result {
@@ -922,6 +1099,7 @@ fn paste_as_configured(
     text: String,
     app_handle: AppHandle,
     settings: AppSettings,
+    replace_punctuation: Option<Replacement>,
 ) -> Result<(), String> {
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;
@@ -948,6 +1126,7 @@ fn paste_as_configured(
             paste_direct(
                 &text,
                 &app_handle,
+                replace_punctuation,
                 #[cfg(target_os = "linux")]
                 settings.typing_tool,
             )?;
@@ -959,7 +1138,7 @@ fn paste_as_configured(
             // clipboard handling) asynchronously; on failure fall through to
             // the legacy path untouched.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            if settings.reliable_paste {
+            let replace_punctuation = if settings.reliable_paste {
                 // Runs entirely on the main thread, as it requires.
                 let (text, app) = (text.clone(), app_handle.clone());
                 let (auto_submit, auto_submit_key, clipboard_handling) = (
@@ -972,7 +1151,9 @@ fn paste_as_configured(
                         &text,
                         &app,
                         &paste_method,
-                        enigo,
+                        (enigo, move |enigo| {
+                            replace_previous_mark(enigo, replace_punctuation)
+                        }),
                         auto_submit,
                         auto_submit_key,
                         clipboard_handling,
@@ -981,16 +1162,22 @@ fn paste_as_configured(
                 match reliable_result {
                     Ok(()) => return Ok(()),
                     Err(e) => {
-                        log::warn!("Reliable paste unavailable ({e}); falling back to legacy paste")
+                        log::warn!(
+                            "Reliable paste unavailable ({e}); falling back to legacy paste"
+                        );
                     }
                 }
-            }
+                replace_punctuation
+            } else {
+                replace_punctuation
+            };
             paste_via_clipboard(
                 &text,
                 &app_handle,
                 &paste_method,
                 paste_delay_ms,
                 paste_delay_after_ms,
+                replace_punctuation,
             )?
         }
         PasteMethod::ExternalScript => {
@@ -1025,6 +1212,115 @@ fn paste_as_configured(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn standalone_mark_replaces_only_a_recent_own_punctuation_tail() {
+        let now = Instant::now();
+        let previous = RecentPaste {
+            finished: now - Duration::from_secs(30),
+            target: 1,
+            focus: Some(11),
+            ends_in_punctuation: true,
+            activity: None,
+        };
+        for mark in ["：", "、", "！", "；", "？", "，", "。"] {
+            assert!(should_replace_punctuation(
+                Some(&previous),
+                mark,
+                Some(1),
+                now
+            ));
+        }
+        assert!(!should_replace_punctuation(
+            Some(&previous),
+            "：",
+            Some(1),
+            now + Duration::from_millis(1)
+        ));
+        assert!(!should_replace_punctuation(
+            Some(&previous),
+            "：",
+            Some(2),
+            now
+        ));
+        assert!(!should_replace_punctuation(
+            Some(&previous),
+            "：",
+            None,
+            now
+        ));
+        assert!(!should_replace_punctuation(None, "？", Some(1), now));
+        let previous = RecentPaste {
+            ends_in_punctuation: false,
+            ..previous
+        };
+        assert!(!should_replace_punctuation(
+            Some(&previous),
+            "：",
+            Some(1),
+            now
+        ));
+    }
+
+    #[test]
+    fn ordinary_and_empty_pastes_never_delete_previous_text() {
+        let now = Instant::now();
+        let previous = RecentPaste {
+            finished: now,
+            target: 1,
+            focus: Some(11),
+            ends_in_punctuation: true,
+            activity: None,
+        };
+        for text in ["", " ", "简单。", "问号", "？！", "？ ", "请按问号键。"] {
+            assert!(!should_replace_punctuation(
+                Some(&previous),
+                text,
+                Some(1),
+                now
+            ));
+        }
+    }
+
+    #[test]
+    fn failed_or_unknown_target_pastes_do_not_authorize_replacement() {
+        let now = Instant::now();
+        let failed = completed_paste(
+            &Err("injection failed".into()),
+            Some(1),
+            true,
+            now,
+            None,
+            Some(11),
+        );
+        assert!(failed.is_none());
+        assert!(completed_paste(&Ok(()), None, true, now, None, Some(11)).is_none());
+        let success = completed_paste(&Ok(()), Some(1), true, now, None, Some(11));
+        assert!(should_replace_punctuation(
+            success.as_ref(),
+            "？",
+            Some(1),
+            now
+        ));
+    }
+
+    #[test]
+    fn input_during_paste_or_clipboard_restoration_invalidates_the_next_replacement() {
+        assert_eq!(unchanged_activity(Some(7), Some(7)), Some(7));
+        assert_eq!(unchanged_activity(Some(7), Some(8)), None);
+        assert_eq!(unchanged_activity(None, Some(8)), None);
+        assert_eq!(unchanged_activity(Some(7), None), None);
+        assert_eq!(unchanged_activity(None, None), None);
+    }
+
+    #[test]
+    fn only_the_same_readable_focused_control_allows_replacement() {
+        assert!(same_focus(Some(11), Some(11)));
+        assert!(!same_focus(Some(11), Some(12)));
+        assert!(!same_focus(Some(11), None));
+        assert!(!same_focus(None, Some(11)));
+        assert!(!same_focus(None, None));
+    }
 
     #[cfg(target_os = "linux")]
     const YDOTOOL_0_1_8_HELP: &str = r#"
